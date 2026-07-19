@@ -75,6 +75,16 @@ GitHub Actions 默认每周一自动运行并提交 `data/qq_versions.json`。
 启动：
 
 ```bash
+napcat          # 前台启动
+napcat bg       # 后台启动
+napcat stop     # 停止后台
+napcat status   # 状态
+napcat help     # 帮助
+```
+
+等价原生命令：
+
+```bash
 xvfb-run -a ~/Napcat/opt/QQ/qq --no-sandbox
 ```
 
