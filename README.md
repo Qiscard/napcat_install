@@ -11,6 +11,7 @@
   - 系统包格式：默认自动识别，可选 Ubuntu/Debian (deb) 或 Fedora/RHEL (rpm)
   - QQ 版本：默认最新，可输入序号选择最近 15 个版本
 - 安装前检测 `~/Napcat`，可选择覆盖或退出
+- 默认安装官方 NapCat TUI-CLI：输入 `napcat` 进入终端管理界面
 - 日志明确输出：下载链接、保存路径、安装路径、架构、校验信息
 - QQ 版本列表来自 [qq-versions](https://rodert.github.io/qq-versions/) / [Releases](https://github.com/Rodert/qq-versions/releases) 与官方配置，仓库每周自动同步
 
@@ -74,19 +75,21 @@ GitHub Actions 默认每周一自动运行并提交 `data/qq_versions.json`。
 
 启动：
 
+安装时默认会安装官方 [NapCat-TUI-CLI](https://github.com/NapNeko/NapCat-TUI-CLI)。装完后：
+
 ```bash
-napcat          # 前台启动
-napcat bg       # 后台启动
-napcat stop     # 停止后台
-napcat status   # 状态
-napcat help     # 帮助
+napcat          # 打开终端管理界面 (dialog TUI)
 ```
+
+官方文档: <https://napneko.github.io/guide/napcat>
 
 等价原生命令：
 
 ```bash
 xvfb-run -a ~/Napcat/opt/QQ/qq --no-sandbox
 ```
+
+若跳过 TUI 或安装失败，会回退到简易 `napcat start|bg|stop|status` 命令。
 
 ## 说明
 

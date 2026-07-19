@@ -260,8 +260,8 @@ ensure_deps() {
 
     if [[ "${PACKAGE_MANAGER}" == "apt" ]] || need_cmd apt-get; then
         ${SUDO} apt-get update -y -qq
-        ${SUDO} apt-get install -y -qq curl unzip jq dpkg xvfb xauth screen flatpak 2>/dev/null || \
-        ${SUDO} apt-get install -y -qq curl unzip jq dpkg xvfb xauth screen
+        ${SUDO} apt-get install -y -qq curl unzip jq dpkg xvfb xauth screen dialog screen dialog flatpak 2>/dev/null || \
+        ${SUDO} apt-get install -y -qq curl unzip jq dpkg xvfb xauth screen dialog screen dialog
     elif need_cmd dnf; then
         ${SUDO} dnf install -y curl unzip jq cpio rpm xvfb-run xorg-x11-server-Xvfb screen || \
         ${SUDO} dnf install -y curl unzip jq cpio rpm screen || \
@@ -576,35 +576,146 @@ download_and_install_napcat() {
     log "NapCat 安装成功"
 }
 
-install_napcat_command() {
-    # 创建快捷启动命令: napcat
+install_napcat_tui_cli() {
+    # 安装官方 NapCat-TUI-CLI (dialog 终端 UI)
+    # 来源: https://github.com/NapNeko/NapCat-TUI-CLI
+    echo ""
+    log "是否安装官方 NapCat TUI-CLI? (输入 napcat 进入终端管理界面)"
+    log "默认安装 [Y], 10 秒后自动确认"
+    local choice
+    choice="$(prompt_timeout 10 "安装 TUI-CLI? [Y/n]: " "Y")"
+    if [[ "${choice}" =~ ^[Nn]$ ]]; then
+        log "已跳过 TUI-CLI 安装, 将创建简易启动命令"
+        install_napcat_simple_command
+        return 0
+    fi
+
+    # 依赖: dialog (TUI 必需), ffmpeg (推荐)
+    local missing=()
+    need_cmd dialog || missing+=("dialog")
+    need_cmd ffmpeg || missing+=("ffmpeg")
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        log "安装 TUI 依赖: ${missing[*]}"
+        if [[ "$(id -u)" -eq 0 ]]; then
+            SUDO=""
+        elif need_cmd sudo; then
+            SUDO="sudo"
+        else
+            log "警告: 无法自动安装依赖 ${missing[*]}, 请手动安装后重试 TUI"
+            install_napcat_simple_command
+            return 1
+        fi
+        if need_cmd apt-get; then
+            ${SUDO} apt-get update -y -qq || true
+            ${SUDO} apt-get install -y -qq "${missing[@]}" || true
+        elif need_cmd dnf; then
+            ${SUDO} dnf install -y "${missing[@]}" || true
+        elif need_cmd yum; then
+            ${SUDO} yum install -y "${missing[@]}" || true
+        fi
+    fi
+    if ! need_cmd dialog; then
+        log "错误: dialog 未安装, 无法使用官方 TUI, 回退简易命令"
+        install_napcat_simple_command
+        return 1
+    fi
+
+    local target_dir="/usr/local/bin"
+    local use_sudo_install="n"
+    if [[ -w "${target_dir}" ]] || [[ "$(id -u)" -eq 0 ]]; then
+        use_sudo_install="n"
+    elif need_cmd sudo; then
+        use_sudo_install="y"
+    else
+        target_dir="${HOME}/.local/bin"
+        mkdir -p "${target_dir}"
+        log "无 /usr/local/bin 写权限, 安装到: ${target_dir}"
+    fi
+
+    local base_url="https://raw.githubusercontent.com/NapNeko/NapCat-TUI-CLI/main/script/tui-cli"
+    local files=("napcat" "_napcat_Boot" "_napcat_Config" "_napcat_old")
+    local failed="n"
+    local tmp_dir="${WORKDIR}/tui-cli"
+    mkdir -p "${tmp_dir}"
+
+    log "开始安装官方 NapCat TUI-CLI 组件到 ${target_dir}"
+    local f url dest tmpf
+    for f in "${files[@]}"; do
+        url="${base_url}/${f}"
+        tmpf="${tmp_dir}/${f}"
+        dest="${target_dir}/${f}"
+        log "下载组件: ${f}"
+        if ! download_file "${url}" "${tmpf}"; then
+            log "错误: 下载失败 ${f}"
+            failed="y"
+            break
+        fi
+        # 校验 shebang
+        if ! head -n1 "${tmpf}" | grep -q '^#!'; then
+            log "错误: ${f} 内容无效 (非脚本)"
+            head -n5 "${tmpf}" || true
+            failed="y"
+            break
+        fi
+        chmod 755 "${tmpf}"
+        if [[ "${use_sudo_install}" == "y" ]]; then
+            if ! sudo mv "${tmpf}" "${dest}"; then
+                log "错误: 无法写入 ${dest}"
+                failed="y"
+                break
+            fi
+            sudo chmod 755 "${dest}" || true
+        else
+            if ! mv "${tmpf}" "${dest}"; then
+                log "错误: 无法写入 ${dest}"
+                failed="y"
+                break
+            fi
+            chmod 755 "${dest}" || true
+        fi
+        log "已安装: ${dest}"
+    done
+
+    if [[ "${failed}" == "y" ]]; then
+        log "警告: 官方 TUI-CLI 安装失败, 回退简易启动命令"
+        install_napcat_simple_command
+        return 1
+    fi
+
+    NAPCAT_CMD_PATH="${target_dir}/napcat"
+    log "官方 TUI-CLI 安装成功: ${NAPCAT_CMD_PATH}"
+    if [[ "${target_dir}" == "${HOME}/.local/bin" ]]; then
+        if ! echo ":${PATH}:" | grep -q ":${target_dir}:"; then
+            log "警告: ${target_dir} 不在 PATH 中"
+            log "可执行: echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ~/.bashrc && source ~/.bashrc"
+        fi
+    fi
+    log "使用方式: 直接运行  napcat  进入终端管理界面"
+    log "带参数时走旧版 CLI, 例如: napcat help"
+}
+
+install_napcat_simple_command() {
+    # 简易启动包装 (TUI 不可用时的回退)
     local cmd_path=""
     local user_bin="${HOME}/.local/bin"
     mkdir -p "${user_bin}"
-
     if [[ -w /usr/local/bin ]] || [[ "$(id -u)" -eq 0 ]]; then
         cmd_path="/usr/local/bin/napcat"
     else
         cmd_path="${user_bin}/napcat"
     fi
 
-    local wrapper_tmp="${WORKDIR}/napcat.cmd"
+    local wrapper_tmp="${WORKDIR}/napcat.simple"
     cat > "${wrapper_tmp}" << EOF
 #!/usr/bin/env bash
-# NapCat quick launcher (generated by napcat_install)
 set -euo pipefail
-
 QQ_BIN="${QQ_EXECUTABLE}"
 INSTALL_BASE="${INSTALL_BASE_DIR}"
 NAPCAT_HOME="${NAPCAT_DIR}"
 SESSION_NAME="napcat"
-
 if [[ ! -f "\${QQ_BIN}" ]]; then
-    echo "错误: 未找到 QQ 可执行文件: \${QQ_BIN}"
-    echo "请重新运行安装脚本。"
-    exit 1
+    echo "错误: 未找到 QQ: \${QQ_BIN}"; exit 1
 fi
-
 run_fg() {
     if command -v xvfb-run >/dev/null 2>&1; then
         exec xvfb-run -a "\${QQ_BIN}" --no-sandbox "\$@"
@@ -612,127 +723,43 @@ run_fg() {
         exec "\${QQ_BIN}" --no-sandbox "\$@"
     fi
 }
-
 session_exists() {
     command -v screen >/dev/null 2>&1 || return 1
     screen -list 2>/dev/null | grep -qE "[0-9]+\\.\${SESSION_NAME}[[:space:]]"
 }
-
-run_bg() {
-    if ! command -v screen >/dev/null 2>&1; then
-        echo "错误: 未安装 screen, 无法后台运行。"
-        echo "请安装: apt-get install -y screen  或  dnf install -y screen"
-        exit 1
-    fi
-    if session_exists; then
-        echo "已存在 screen 会话: \${SESSION_NAME}"
-        echo "附加: napcat attach"
-        echo "停止: napcat stop"
-        return 0
-    fi
-    if command -v xvfb-run >/dev/null 2>&1; then
-        screen -dmS "\${SESSION_NAME}" xvfb-run -a "\${QQ_BIN}" --no-sandbox "\$@"
-    else
-        screen -dmS "\${SESSION_NAME}" "\${QQ_BIN}" --no-sandbox "\$@"
-    fi
-    echo "已后台启动 (screen: \${SESSION_NAME})"
-    echo "查看: napcat attach"
-}
-
-usage() {
-    cat << TIP
-NapCat 快捷命令
-
-用法:
-  napcat              前台启动
-  napcat start        前台启动
-  napcat bg           后台启动 (screen)
-  napcat stop         停止后台会话
-  napcat attach       附加到后台会话
-  napcat status       查看状态
-  napcat path         显示安装路径
-  napcat token        显示 WebUI token
-  napcat help         帮助
-  napcat <QQ号>       前台带账号启动
-
-安装目录: \${INSTALL_BASE}
-QQ:       \${QQ_BIN}
-NapCat:   \${NAPCAT_HOME}
-TIP
-}
-
-cmd="\${1:-start}"
-shift || true
-
+cmd="\${1:-start}"; shift || true
 case "\${cmd}" in
-    start|run|fg|foreground)
-        run_fg "\$@"
-        ;;
+    start|run|fg|"") run_fg "\$@" ;;
     bg|background|daemon)
-        run_bg "\$@"
-        ;;
-    stop)
-        if session_exists; then
-            screen -S "\${SESSION_NAME}" -X quit
-            echo "已停止 screen 会话: \${SESSION_NAME}"
+        command -v screen >/dev/null 2>&1 || { echo "需要 screen"; exit 1; }
+        session_exists && { echo "已在运行"; exit 0; }
+        if command -v xvfb-run >/dev/null 2>&1; then
+            screen -dmS "\${SESSION_NAME}" xvfb-run -a "\${QQ_BIN}" --no-sandbox "\$@"
         else
-            echo "未发现后台会话: \${SESSION_NAME}"
+            screen -dmS "\${SESSION_NAME}" "\${QQ_BIN}" --no-sandbox "\$@"
         fi
+        echo "后台已启动: screen -r \${SESSION_NAME}"
         ;;
-    attach|logs)
-        if session_exists; then
-            exec screen -r "\${SESSION_NAME}"
-        else
-            echo "未发现后台会话: \${SESSION_NAME}"
-            exit 1
-        fi
-        ;;
+    stop) session_exists && screen -S "\${SESSION_NAME}" -X quit && echo stopped || echo "未运行" ;;
     status)
-        echo "安装目录: \${INSTALL_BASE}"
-        echo "QQ:       \${QQ_BIN}"
-        echo "NapCat:   \${NAPCAT_HOME}"
-        if [[ -f "\${QQ_BIN}" ]]; then echo "QQ 文件:  存在"; else echo "QQ 文件:  缺失"; fi
-        if session_exists; then
-            echo "后台会话: 运行中 (\${SESSION_NAME})"
-        else
-            echo "后台会话: 未运行"
-        fi
-        ;;
-    path)
-        echo "\${INSTALL_BASE}"
-        echo "QQ=\${QQ_BIN}"
-        echo "NAPCAT=\${NAPCAT_HOME}"
-        ;;
-    token)
-        tf="\${NAPCAT_HOME}/config/webui.json"
-        if [[ -f "\${tf}" ]] && command -v jq >/dev/null 2>&1; then
-            jq -r '"token=" + ((.token // .Token // empty)|tostring)' "\${tf}" 2>/dev/null || cat "\${tf}"
-        elif [[ -f "\${tf}" ]]; then
-            cat "\${tf}"
-        else
-            echo "未找到: \${tf}"
-            exit 1
-        fi
+        echo "QQ=\${QQ_BIN}"; echo "NAPCAT=\${NAPCAT_HOME}"
+        session_exists && echo "后台: 运行中" || echo "后台: 未运行"
         ;;
     help|-h|--help)
-        usage
+        echo "简易 napcat: start|bg|stop|status"
+        echo "提示: 官方 TUI 安装失败时使用此回退命令"
         ;;
     *)
-        if [[ "\${cmd}" =~ ^[0-9]+$ ]]; then
-            run_fg -q "\${cmd}" "\$@"
-        else
-            echo "未知参数: \${cmd}"
-            usage
-            exit 1
+        if [[ "\${cmd}" =~ ^[0-9]+$ ]]; then run_fg -q "\${cmd}" "\$@"; else
+            echo "未知参数: \${cmd}"; exit 1
         fi
         ;;
 esac
 EOF
-
     if [[ "${cmd_path}" == /usr/local/bin/napcat ]]; then
         if [[ -w /usr/local/bin ]] || [[ "$(id -u)" -eq 0 ]]; then
             install -m 755 "${wrapper_tmp}" "${cmd_path}"
-        elif command -v sudo >/dev/null 2>&1 && sudo install -m 755 "${wrapper_tmp}" "${cmd_path}"; then
+        elif need_cmd sudo && sudo install -m 755 "${wrapper_tmp}" "${cmd_path}"; then
             :
         else
             cmd_path="${user_bin}/napcat"
@@ -741,16 +768,8 @@ EOF
     else
         install -m 755 "${wrapper_tmp}" "${cmd_path}"
     fi
-
     NAPCAT_CMD_PATH="${cmd_path}"
-    log "已安装快捷命令: ${cmd_path}"
-    if [[ "${cmd_path}" == "${user_bin}/napcat" ]]; then
-        if ! echo ":${PATH}:" | grep -q ":${user_bin}:"; then
-            log "警告: ${user_bin} 不在 PATH 中"
-            log "可执行: echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ~/.bashrc && source ~/.bashrc"
-            log "或直接使用: ${cmd_path}"
-        fi
-    fi
+    log "已安装简易命令: ${cmd_path}"
 }
 
 show_summary() {
@@ -765,14 +784,12 @@ show_summary() {
     log "包格式: ${PACKAGE_FORMAT}"
     log "下载方式: $([ "${USE_PROXY}" = "y" ] && echo "代理 ${PROXY_PREFIX}" || echo "直连")"
     echo ""
-    log "快捷命令:"
+    log "快捷命令 (官方 TUI-CLI):"
     if [[ -n "${NAPCAT_CMD_PATH:-}" ]]; then
-        echo -e "  ${CYAN}napcat${NC}              # 前台启动"
-        echo -e "  ${CYAN}napcat bg${NC}           # 后台启动 (screen)"
-        echo -e "  ${CYAN}napcat stop${NC}         # 停止后台"
-        echo -e "  ${CYAN}napcat status${NC}       # 查看状态"
-        echo -e "  ${CYAN}napcat help${NC}         # 更多用法"
+        echo -e "  ${CYAN}napcat${NC}              # 打开终端管理界面 (dialog TUI)"
         echo -e "  命令路径: ${CYAN}${NAPCAT_CMD_PATH}${NC}"
+        echo -e "  文档: ${CYAN}https://napneko.github.io/guide/napcat${NC}"
+        echo -e "  项目: ${CYAN}https://github.com/NapNeko/NapCat-TUI-CLI${NC}"
     else
         echo -e "  ${CYAN}xvfb-run -a ${QQ_EXECUTABLE} --no-sandbox${NC}"
     fi
@@ -780,8 +797,8 @@ show_summary() {
     log "等价原生命令:"
     echo -e "  ${CYAN}xvfb-run -a ${QQ_EXECUTABLE} --no-sandbox${NC}"
     echo ""
-    log "WebUI Token:"
-    echo -e "  ${CYAN}napcat token${NC}  或  ${CYAN}${NAPCAT_DIR}/config/webui.json${NC}"
+    log "WebUI Token 文件:"
+    echo -e "  ${CYAN}${NAPCAT_DIR}/config/webui.json${NC}"
     log "=========================="
 }
 
@@ -805,7 +822,7 @@ main() {
     check_existing_install
     install_linuxqq
     download_and_install_napcat
-    install_napcat_command
+    install_napcat_tui_cli
     show_summary
 }
 
