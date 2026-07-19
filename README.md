@@ -42,13 +42,15 @@ napcat_install/
 
 ## 版本列表同步
 
-手动同步：
+手动同步（拉取后会校验链接，自动剔除失效项）：
 
 ```bash
 python3 scripts/sync_qq_versions.py
 ```
 
 GitHub Actions 默认每周一自动运行并提交 `data/qq_versions.json`。
+
+安装时也会对所选 QQ 下载链接做预检；若失效，会自动在同架构/格式的可用版本中回退。
 
 列表字段说明：
 

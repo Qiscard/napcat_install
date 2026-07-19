@@ -5,3 +5,9 @@ QQ.*
 .DS_Store
 __pycache__/
 *.pyc
+
+# local junk
+*.db
+*.db-shm
+*.db-wal
+__pycache__/

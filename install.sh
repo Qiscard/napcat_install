@@ -215,6 +215,19 @@ download_file() {
     log "下载成功: ${dest} ($(du -h "${dest}" | awk '{print $1}'))"
 }
 
+# 预检下载链接是否可达 (拉前 2KB)
+url_reachable() {
+    local url="$1"
+    local final_url code size
+    final_url="$(proxy_url "${url}")"
+    read -r code size < <(curl -k -s -o /dev/null -w "%{http_code} %{size_download}" -L --connect-timeout 12 --max-time 25 -A "Mozilla/5.0" -r 0-2047 "${final_url}" || echo "000 0")
+    if [[ "${code}" =~ ^[0-9]+$ && "${code}" -lt 400 && "${size}" -gt 0 ]]; then
+        return 0
+    fi
+    log "链接不可用: HTTP ${code}, bytes=${size}, url=${url}"
+    return 1
+}
+
 ensure_deps() {
     local missing=()
     for c in curl unzip jq; do
@@ -296,7 +309,10 @@ choose_qq_version() {
     # 使用 JSON 数组，避免 TSV 空字段错位；按版本聚合后取最新 15 个
     local list_file="${WORKDIR}/qq_choices.json"
     jq --arg arch "${SYSTEM_ARCH}" --arg fmt "${PACKAGE_FORMAT}" '
-        [.packages[] | select(.arch==$arch and .format==$fmt)]
+        [.packages[]
+         | select(.arch==$arch and .format==$fmt)
+         | select(.available != false)
+        ]
         | group_by(.version)
         | map(sort_by(.update_time) | reverse | .[0])
         | sort_by(.update_time) | reverse
@@ -349,9 +365,63 @@ choose_qq_version() {
     log "下载链接: ${SELECTED_QQ_URL}"
     [[ -n "${SELECTED_QQ_SHA256}" ]] && log "SHA256: ${SELECTED_QQ_SHA256}"
     [[ -n "${SELECTED_QQ_MD5}" ]] && log "MD5: ${SELECTED_QQ_MD5}"
+
+    # 安装前校验链接；失效则在同版本/架构/格式中寻找可用替代
+    resolve_qq_download_url "${SELECTED_QQ_VERSION}" "${arch}" "${fmt}"
+
+    log "最终下载链接: ${SELECTED_QQ_URL}"
     log "安装位置: ${INSTALL_BASE_DIR}"
     log "QQ 路径: ${QQ_BASE_PATH}"
     log "NapCat 路径: ${NAPCAT_DIR}"
+}
+
+# 校验并在失效时回退到同版本可用源 / 次新版本
+resolve_qq_download_url() {
+    local want_ver="$1"
+    local want_arch="$2"
+    local want_fmt="$3"
+
+    if url_reachable "${SELECTED_QQ_URL}"; then
+        log "下载链接预检通过"
+        return 0
+    fi
+
+    log "警告: 所选链接失效, 尝试寻找替代源..."
+    local alt_file="${WORKDIR}/qq_alt.json"
+    jq --arg ver "${want_ver}" --arg arch "${want_arch}" --arg fmt "${want_fmt}" '
+        [.packages[]
+         | select(.arch==$arch and .format==$fmt)
+         | select((.available != false))
+        ]
+        | sort_by(.update_time) | reverse
+    ' "${QQ_VERSIONS_FILE}" > "${alt_file}"
+
+    local n i ver url sha md5 fname date
+    n="$(jq 'length' "${alt_file}")"
+    for ((i=0; i<n; i++)); do
+        ver="$(jq -r --argjson i "$i" '.[$i].version' "${alt_file}")"
+        url="$(jq -r --argjson i "$i" '.[$i].url' "${alt_file}")"
+        # 先同版本，再其他较新版本
+        if [[ "${ver}" != "${want_ver}" && ${i} -eq 0 ]]; then
+            :
+        fi
+        log "尝试替代: version=${ver} url=${url}"
+        if url_reachable "${url}"; then
+            SELECTED_QQ_VERSION="${ver}"
+            SELECTED_QQ_URL="${url}"
+            SELECTED_QQ_SHA256="$(jq -r --argjson i "$i" '.[$i].sha256 // empty' "${alt_file}")"
+            SELECTED_QQ_MD5="$(jq -r --argjson i "$i" '.[$i].md5 // empty' "${alt_file}")"
+            SELECTED_QQ_FILENAME="$(jq -r --argjson i "$i" '.[$i].filename' "${alt_file}")"
+            date="$(jq -r --argjson i "$i" '.[$i].update_date // .[$i].update_time[0:10]' "${alt_file}")"
+            log "已切换到可用源: 版本=${SELECTED_QQ_VERSION}, 更新=${date}"
+            log "文件名: ${SELECTED_QQ_FILENAME}"
+            return 0
+        fi
+    done
+
+    log "错误: 未找到可用的 QQ 下载链接 (${want_arch}/${want_fmt})"
+    log "可稍后重试, 或手动更新 data/qq_versions.json"
+    exit 1
 }
 
 

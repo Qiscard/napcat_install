@@ -4,176 +4,105 @@
     "https://github.com/Rodert/qq-versions/releases",
     "https://im.qq.com/"
   ],
-  "synced_at": "2026-07-18T05:21:25Z",
-  "count": 18,
+  "synced_at": "2026-07-19T11:53:44Z",
+  "count": 12,
+  "dead_count": 0,
   "packages": [
     {
-      "update_time": "2026-07-10T00:00:00Z",
-      "update_date": "2026-07-10",
-      "version": "3.2.31",
-      "build": "260710",
-      "arch": "mips64el",
-      "format": "deb",
-      "filename": "QQ_3.2.31_260710_mips64el_01.deb",
-      "url": "https://qqdl.gtimg.cn/qqfile/QQNTV2/9.9.32/release/c390e792/QQ_3.2.31_260710_mips64el_01.deb",
-      "size": null,
-      "sha256": "",
-      "md5": "",
-      "source": "official"
-    },
-    {
-      "update_time": "2026-07-10T00:00:00Z",
-      "update_date": "2026-07-10",
-      "version": "3.2.31",
-      "build": "260710",
-      "arch": "loongarch64",
-      "format": "deb",
-      "filename": "QQ_3.2.31_260710_loongarch64_01.deb",
-      "url": "https://qqdl.gtimg.cn/qqfile/QQNTV2/9.9.32/release/c390e792/QQ_3.2.31_260710_loongarch64_01.deb",
-      "size": null,
-      "sha256": "",
-      "md5": "",
-      "source": "official"
-    },
-    {
-      "update_time": "2026-07-10T00:00:00Z",
-      "update_date": "2026-07-10",
-      "version": "3.2.31",
-      "build": "260710",
-      "arch": "arm64",
-      "format": "rpm",
-      "filename": "QQ_3.2.31_260710_aarch64_01.rpm",
-      "url": "https://qqdl.gtimg.cn/qqfile/QQNTV2/9.9.32/release/c390e792/QQ_3.2.31_260710_aarch64_01.rpm",
-      "size": null,
-      "sha256": "",
-      "md5": "",
-      "source": "official"
-    },
-    {
-      "update_time": "2026-07-10T00:00:00Z",
-      "update_date": "2026-07-10",
-      "version": "3.2.31",
-      "build": "260710",
-      "arch": "arm64",
-      "format": "deb",
-      "filename": "QQ_3.2.31_260710_arm64_01.deb",
-      "url": "https://qqdl.gtimg.cn/qqfile/QQNTV2/9.9.32/release/c390e792/QQ_3.2.31_260710_arm64_01.deb",
-      "size": null,
-      "sha256": "",
-      "md5": "",
-      "source": "official"
-    },
-    {
-      "update_time": "2026-07-10T00:00:00Z",
-      "update_date": "2026-07-10",
-      "version": "3.2.31",
-      "build": "260710",
-      "arch": "amd64",
-      "format": "rpm",
-      "filename": "QQ_3.2.31_260710_x86_64_01.rpm",
-      "url": "https://qqdl.gtimg.cn/qqfile/QQNTV2/9.9.32/release/c390e792/QQ_3.2.31_260710_x86_64_01.rpm",
-      "size": null,
-      "sha256": "",
-      "md5": "",
-      "source": "official"
-    },
-    {
-      "update_time": "2026-07-10T00:00:00Z",
-      "update_date": "2026-07-10",
-      "version": "3.2.31",
-      "build": "260710",
-      "arch": "amd64",
-      "format": "deb",
-      "filename": "QQ_3.2.31_260710_amd64_01.deb",
-      "url": "https://qqdl.gtimg.cn/qqfile/QQNTV2/9.9.32/release/c390e792/QQ_3.2.31_260710_amd64_01.deb",
-      "size": null,
-      "sha256": "",
-      "md5": "",
-      "source": "official"
-    },
-    {
-      "update_time": "2026-05-28T20:55:46Z",
+      "update_time": "2026-05-28T00:00:00Z",
       "update_date": "2026-05-28",
       "version": "3.2.29",
       "build": "260528",
       "arch": "mips64el",
       "format": "deb",
       "filename": "QQ_3.2.29_260528_mips64el_01.deb",
-      "url": "https://github.com/Rodert/qq-versions/releases/download/qq-packages-20260528-3e8913a2/QQ_3.2.29_260528_mips64el_01.deb",
-      "size": 169638818,
-      "sha256": "b5ffd879f0467dfb82d2d0b68610d52945bb363818e4044ddb9bfbee23b11ab4",
+      "url": "https://qqdl.gtimg.cn/qqfile/QQNT/9.9.31/release/00e6a3e7/QQ_3.2.29_260528_mips64el_01.deb",
+      "size": null,
+      "sha256": "",
       "md5": "",
-      "source": "rodert:qq-packages-20260528-3e8913a2"
+      "source": "official",
+      "available": true,
+      "check_code": "206"
     },
     {
-      "update_time": "2026-05-28T20:55:46Z",
+      "update_time": "2026-05-28T00:00:00Z",
       "update_date": "2026-05-28",
       "version": "3.2.29",
       "build": "260528",
       "arch": "loongarch64",
       "format": "deb",
       "filename": "QQ_3.2.29_260528_loongarch64_01.deb",
-      "url": "https://github.com/Rodert/qq-versions/releases/download/qq-packages-20260528-3e8913a2/QQ_3.2.29_260528_loongarch64_01.deb",
-      "size": 174391568,
-      "sha256": "cd02e76157983e328212f67eca972cfa07268d1d17c6f35f06ad4a508d085aa9",
+      "url": "https://qqdl.gtimg.cn/qqfile/QQNT/9.9.31/release/00e6a3e7/QQ_3.2.29_260528_loongarch64_01.deb",
+      "size": null,
+      "sha256": "",
       "md5": "",
-      "source": "rodert:qq-packages-20260528-3e8913a2"
+      "source": "official",
+      "available": true,
+      "check_code": "206"
     },
     {
-      "update_time": "2026-05-28T20:55:46Z",
+      "update_time": "2026-05-28T00:00:00Z",
       "update_date": "2026-05-28",
       "version": "3.2.29",
       "build": "260528",
       "arch": "arm64",
       "format": "rpm",
       "filename": "QQ_3.2.29_260528_aarch64_01.rpm",
-      "url": "https://github.com/Rodert/qq-versions/releases/download/qq-packages-20260528-3e8913a2/QQ_3.2.29_260528_aarch64_01.rpm",
-      "size": 176727673,
-      "sha256": "f1903bb7c212e6a44e46eb5a20b2f14a28ca69d4979dd8564d4dbc7103804826",
+      "url": "https://qqdl.gtimg.cn/qqfile/QQNT/9.9.31/release/00e6a3e7/QQ_3.2.29_260528_aarch64_01.rpm",
+      "size": null,
+      "sha256": "",
       "md5": "",
-      "source": "rodert:qq-packages-20260528-3e8913a2"
+      "source": "official",
+      "available": true,
+      "check_code": "206"
     },
     {
-      "update_time": "2026-05-28T20:55:46Z",
+      "update_time": "2026-05-28T00:00:00Z",
       "update_date": "2026-05-28",
       "version": "3.2.29",
       "build": "260528",
       "arch": "arm64",
       "format": "deb",
       "filename": "QQ_3.2.29_260528_arm64_01.deb",
-      "url": "https://github.com/Rodert/qq-versions/releases/download/qq-packages-20260528-3e8913a2/QQ_3.2.29_260528_arm64_01.deb",
-      "size": 201728544,
-      "sha256": "5bcd8ccda401fbfa1821a7c3c758f84a253c317568f0b9c2d74426a24749e9a6",
+      "url": "https://qqdl.gtimg.cn/qqfile/QQNT/9.9.31/release/00e6a3e7/QQ_3.2.29_260528_arm64_01.deb",
+      "size": null,
+      "sha256": "",
       "md5": "",
-      "source": "rodert:qq-packages-20260528-3e8913a2"
+      "source": "official",
+      "available": true,
+      "check_code": "206"
     },
     {
-      "update_time": "2026-05-28T20:55:46Z",
+      "update_time": "2026-05-28T00:00:00Z",
       "update_date": "2026-05-28",
       "version": "3.2.29",
       "build": "260528",
       "arch": "amd64",
       "format": "rpm",
       "filename": "QQ_3.2.29_260528_x86_64_01.rpm",
-      "url": "https://github.com/Rodert/qq-versions/releases/download/qq-packages-20260528-3e8913a2/QQ_3.2.29_260528_x86_64_01.rpm",
-      "size": 184197956,
-      "sha256": "2a42d3ff1604840f4872a24b0ae3073fdfb8f32873d6f37322e97984476ce781",
+      "url": "https://qqdl.gtimg.cn/qqfile/QQNT/9.9.31/release/00e6a3e7/QQ_3.2.29_260528_x86_64_01.rpm",
+      "size": null,
+      "sha256": "",
       "md5": "",
-      "source": "rodert:qq-packages-20260528-3e8913a2"
+      "source": "official",
+      "available": true,
+      "check_code": "206"
     },
     {
-      "update_time": "2026-05-28T20:55:46Z",
+      "update_time": "2026-05-28T00:00:00Z",
       "update_date": "2026-05-28",
       "version": "3.2.29",
       "build": "260528",
       "arch": "amd64",
       "format": "deb",
       "filename": "QQ_3.2.29_260528_amd64_01.deb",
-      "url": "https://github.com/Rodert/qq-versions/releases/download/qq-packages-20260528-3e8913a2/QQ_3.2.29_260528_amd64_01.deb",
-      "size": 182597964,
-      "sha256": "1e3828079673c94994bc0f4780d5d8528647639920659862d49d1c2f2a198e25",
+      "url": "https://qqdl.gtimg.cn/qqfile/QQNT/9.9.31/release/00e6a3e7/QQ_3.2.29_260528_amd64_01.deb",
+      "size": null,
+      "sha256": "",
       "md5": "",
-      "source": "rodert:qq-packages-20260528-3e8913a2"
+      "source": "official",
+      "available": true,
+      "check_code": "206"
     },
     {
       "update_time": "2026-05-19T20:20:05Z",
@@ -187,7 +116,9 @@
       "size": 165164234,
       "sha256": "418b374d2a2075fc2f2e23db87c21e9efe7cb5d9a942a1d2781414cb7e5a3f94",
       "md5": "",
-      "source": "rodert:qq-packages-20260511-e1ebd148"
+      "source": "rodert:qq-packages-20260511-e1ebd148",
+      "available": true,
+      "check_code": "206"
     },
     {
       "update_time": "2026-05-19T20:20:05Z",
@@ -201,7 +132,9 @@
       "size": 169829308,
       "sha256": "6bc61d0883af0c1162e7e28a06c21db531d8266888412e4af546f3feabb7af42",
       "md5": "",
-      "source": "rodert:qq-packages-20260511-e1ebd148"
+      "source": "rodert:qq-packages-20260511-e1ebd148",
+      "available": true,
+      "check_code": "206"
     },
     {
       "update_time": "2026-05-19T20:20:05Z",
@@ -215,7 +148,9 @@
       "size": 172136605,
       "sha256": "aa753d191648c657b8a8574733790f68507f53d3a56f3e36e97751687f8640af",
       "md5": "",
-      "source": "rodert:qq-packages-20260511-e1ebd148"
+      "source": "rodert:qq-packages-20260511-e1ebd148",
+      "available": true,
+      "check_code": "206"
     },
     {
       "update_time": "2026-05-19T20:20:05Z",
@@ -229,7 +164,9 @@
       "size": 196884820,
       "sha256": "80c49f4f2ee631cb9b730db737bc48983736a0776c5ae1a5b2702acc0eeb2428",
       "md5": "",
-      "source": "rodert:qq-packages-20260511-e1ebd148"
+      "source": "rodert:qq-packages-20260511-e1ebd148",
+      "available": true,
+      "check_code": "206"
     },
     {
       "update_time": "2026-05-19T20:20:05Z",
@@ -243,7 +180,9 @@
       "size": 179200088,
       "sha256": "30f851effcca52eb9d7222bc25861611eba05e52c056ab9b04854ab5d563a91d",
       "md5": "",
-      "source": "rodert:qq-packages-20260511-e1ebd148"
+      "source": "rodert:qq-packages-20260511-e1ebd148",
+      "available": true,
+      "check_code": "206"
     },
     {
       "update_time": "2026-05-19T20:20:05Z",
@@ -257,7 +196,10 @@
       "size": 177934060,
       "sha256": "68e79d74acdc0c5a70efa8ea1d8b6410b51a21906843774d382f32e0e3a1f0d7",
       "md5": "",
-      "source": "rodert:qq-packages-20260511-e1ebd148"
+      "source": "rodert:qq-packages-20260511-e1ebd148",
+      "available": true,
+      "check_code": "206"
     }
-  ]
+  ],
+  "dead_packages": []
 }

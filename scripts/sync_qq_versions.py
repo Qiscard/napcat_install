@@ -1,19 +1,23 @@
 #!/usr/bin/env python3
-"""每周同步 QQ Linux 安装包版本列表。
+"""同步 QQ Linux 安装包版本列表，并在写入前校验下载链接。
 
 数据来源:
   - 官方 pcConfig (最新版)
   - https://github.com/Rodert/qq-versions/releases (历史版本)
   - https://rodert.github.io/qq-versions/
 
-输出: data/qq_versions.json
-字段: update_time, update_date, version, arch, format, url, sha256, md5, filename, size, source
+规则:
+  1. 拉取后对每个链接做可达性校验
+  2. 失效链接丢弃；同 version+arch+format 优先保留可用源
+  3. 优先顺序: official(可用) > rodert(可用)
+  4. 输出 data/qq_versions.json
 """
 
 from __future__ import annotations
 
 import json
 import re
+import subprocess
 import sys
 import urllib.request
 from datetime import datetime, timezone
@@ -21,7 +25,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "data" / "qq_versions.json"
-UA = {"User-Agent": "napcat-install-sync/1.0 (+https://github.com/Qiscard/napcat_install)"}
+UA = {"User-Agent": "napcat-install-sync/1.1 (+https://github.com/Qiscard/napcat_install)"}
 
 OFFICIAL_CONFIG_URLS = [
     "https://cdn-go.cn/qq-web/im.qq.com_new/latest/rainbow/pcConfig.json",
@@ -80,6 +84,7 @@ def parse_filename(name: str, published: str, url: str, size, sha256: str = "", 
         "sha256": sha256 or "",
         "md5": md5 or "",
         "source": source,
+        "available": None,
     }
 
 
@@ -130,6 +135,7 @@ def fetch_official() -> list[dict]:
                 "sha256": "",
                 "md5": "",
                 "source": "official",
+                "available": None,
             }
         items.append(item)
     return items
@@ -172,34 +178,100 @@ def fetch_rodert() -> list[dict]:
     return items
 
 
-def merge(official: list[dict], historical: list[dict]) -> list[dict]:
-    result = []
-    seen_vaf = set()
+def check_url(url: str, timeout: int = 18) -> tuple[bool, str, int | None]:
+    """返回 (ok, http_code, content_length_hint)."""
+    cmd = [
+        "curl", "-k", "-s", "-o", "/dev/null",
+        "-w", "%{http_code} %{size_download}",
+        "-L", "--connect-timeout", "10", "--max-time", str(min(timeout, 20)),
+        "-A", "Mozilla/5.0",
+        "-r", "0-2047",
+        url,
+    ]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        parts = (proc.stdout or "").strip().split()
+        code = parts[0] if parts else "000"
+        size = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
+        ok = code.isdigit() and int(code) < 400 and size > 0
+        return ok, code, size if size else None
+    except Exception as exc:  # noqa: BLE001
+        return False, f"err:{exc}", None
+
+
+def source_rank(source: str) -> int:
+    if source == "official":
+        return 0
+    if source.startswith("rodert"):
+        return 1
+    return 9
+
+
+def validate_and_merge(candidates: list[dict]) -> tuple[list[dict], list[dict]]:
+    """校验全部候选，按 version+arch+format 选最优可用源。"""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    # 同 filename 去重，保留先出现的 (official 在前)
     seen_file = set()
-
-    for item in official + historical:
-        vaf = (item["version"], item["arch"], item["format"])
-        fkey = item["filename"]
-        if fkey in seen_file:
+    uniq: list[dict] = []
+    for item in candidates:
+        fn = item.get("filename") or item.get("url")
+        if fn in seen_file:
             continue
-        # 同版本/架构/格式优先保留先出现的 (官方在前)
-        if vaf in seen_vaf:
-            continue
-        seen_vaf.add(vaf)
-        seen_file.add(fkey)
-        result.append(item)
+        seen_file.add(fn)
+        uniq.append(item)
 
-    result.sort(
+    print(f"开始并行校验 {len(uniq)} 个候选链接...")
+    checked: list[dict] = []
+    dead: list[dict] = []
+
+    def work(item: dict):
+        ok, code, _hint = check_url(item["url"])
+        out = dict(item)
+        out["available"] = ok
+        out["check_code"] = code
+        return out, ok
+
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        futs = [ex.submit(work, item) for item in uniq]
+        for fut in as_completed(futs):
+            item, ok = fut.result()
+            if ok:
+                checked.append(item)
+                print(f"  OK  {item['version']} {item['arch']} {item['format']} [{item['source']}] {item.get('check_code')}")
+            else:
+                dead.append(item)
+                print(f"  BAD {item['version']} {item['arch']} {item['format']} [{item['source']}] {item.get('check_code')} {item['url']}")
+
+    best: dict[tuple, dict] = {}
+    for item in checked:
+        key = (item["version"], item["arch"], item["format"])
+        prev = best.get(key)
+        if prev is None:
+            best[key] = item
+            continue
+        prev_rank = source_rank(str(prev.get("source") or ""))
+        cur_rank = source_rank(str(item.get("source") or ""))
+        if cur_rank < prev_rank:
+            best[key] = item
+        elif cur_rank == prev_rank and (item.get("update_time") or "") > (prev.get("update_time") or ""):
+            best[key] = item
+
+    packages = list(best.values())
+    packages.sort(
         key=lambda x: (x.get("update_time") or "", x.get("version") or "", x.get("arch") or "", x.get("format") or ""),
         reverse=True,
     )
-    return result
+    return packages, dead
 
 
 def main() -> int:
     official = fetch_official()
     historical = fetch_rodert()
-    packages = merge(official, historical)
+    # official 在前，便于同 key 优先
+    candidates = official + historical
+    packages, dead = validate_and_merge(candidates)
+
     out = {
         "source": [
             "https://rodert.github.io/qq-versions/",
@@ -208,16 +280,32 @@ def main() -> int:
         ],
         "synced_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "count": len(packages),
+        "dead_count": len(dead),
         "packages": packages,
+        "dead_packages": [
+            {
+                "version": d.get("version"),
+                "arch": d.get("arch"),
+                "format": d.get("format"),
+                "url": d.get("url"),
+                "source": d.get("source"),
+                "check_code": d.get("check_code"),
+                "filename": d.get("filename"),
+            }
+            for d in dead
+        ],
     }
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(json.dumps(out, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    print(f"wrote {OUT} ({len(packages)} packages)")
+    print(f"wrote {OUT} (available={len(packages)}, dead={len(dead)})")
     versions = []
     for p in packages:
         if p["version"] not in versions:
             versions.append(p["version"])
-    print("versions:", ", ".join(versions[:20]))
+    print("versions:", ", ".join(versions[:20]) if versions else "(none)")
+    if not packages:
+        print("error: no available packages after validation", file=sys.stderr)
+        return 1
     return 0
 
 
