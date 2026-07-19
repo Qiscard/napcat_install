@@ -1,13 +1,12 @@
 *.deb
 *.rpm
-NapCat.Shell.zip
 QQ.*
 .DS_Store
 __pycache__/
 *.pyc
-
-# local junk
 *.db
 *.db-shm
 *.db-wal
-__pycache__/
+
+# keep packages/NapCat.Shell.zip tracked; ignore other zip dumps
+/NapCat.Shell.zip

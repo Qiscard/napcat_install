@@ -529,9 +529,47 @@ install_linuxqq() {
 download_and_install_napcat() {
     local zip_path="${DOWNLOAD_DIR}/NapCat.Shell.zip"
     local napcat_url="https://github.com/NapNeko/NapCatQQ/releases/latest/download/NapCat.Shell.zip"
+    local local_zip=""
+    local cand
 
-    log "开始下载 NapCat..."
-    download_file "${napcat_url}" "${zip_path}"
+    # 优先使用仓库内置包
+    for cand in         "${SCRIPT_DIR}/packages/NapCat.Shell.zip"         "${SCRIPT_DIR}/NapCat.Shell.zip"         "./packages/NapCat.Shell.zip"         "./NapCat.Shell.zip"
+    do
+        if [[ -f "${cand}" && -s "${cand}" ]]; then
+            local_zip="${cand}"
+            break
+        fi
+    done
+
+    if [[ -n "${local_zip}" ]]; then
+        log "使用本地 NapCat 包: ${local_zip}"
+        log "文件大小: $(du -h "${local_zip}" | awk '{print $1}')"
+        if [[ -f "${local_zip}.sha256" ]]; then
+            local expect actual
+            expect="$(awk 'NR==1{print $1}' "${local_zip}.sha256")"
+            actual="$(sha256sum "${local_zip}" | awk '{print $1}')"
+            if [[ -n "${expect}" && "${expect}" == "${actual}" ]]; then
+                log "本地包 SHA256 校验通过"
+            elif [[ -n "${expect}" ]]; then
+                log "警告: 本地包 SHA256 不匹配, 将尝试在线下载"
+                log "期望: ${expect}"
+                log "实际: ${actual}"
+                local_zip=""
+            fi
+        fi
+    fi
+
+    if [[ -n "${local_zip}" ]]; then
+        cp -f "${local_zip}" "${zip_path}"
+        log "已复制本地包到下载目录: ${zip_path}"
+    else
+        log "未找到可用本地包, 开始在线下载 NapCat..."
+        log "下载链接: ${napcat_url}"
+        if ! download_file "${napcat_url}" "${zip_path}"; then
+            log "错误: NapCat 下载失败"
+            exit 1
+        fi
+    fi
 
     local extract_dir="${WORKDIR}/NapCatExtract"
     rm -rf "${extract_dir}"
