@@ -24,33 +24,54 @@ bash install.sh
 bash <(curl -fsSL https://raw.githubusercontent.com/Qiscard/napcat_install/main/install.sh)
 ```
 
-GitHub 较慢时：
+## 资源获取方式
 
-```bash
-bash <(curl -fsSL https://ghproxy.net/https://raw.githubusercontent.com/Qiscard/napcat_install/main/install.sh)
+安装时二选一（10 秒超时，默认 1）：
+
+1. **直连下载**（默认）
+2. **手动导入安装包**
+
+### 手动导入
+
+把文件放到：
+
+```text
+<仓库目录>/packages/
+# 克隆安装时一般是:
+./packages/
+# 或
+/root/napcat_install/packages/
 ```
 
-> 克隆安装优先用本地 `packages/NapCat.Shell.zip`；在线安装会按顺序尝试：jsDelivr / 本仓库 raw / ghproxy / 官方 GitHub。
+| 文件 | 格式 | 文件名/规则 | 说明 |
+|------|------|-------------|------|
+| NapCat | `.zip` | `NapCat.Shell.zip`（固定） | 必需 |
+| LinuxQQ | `.deb` 或 `.rpm` | `QQ_*.deb` / `QQ_*.rpm`，或 `QQ.deb` / `QQ.rpm` | 必需，与系统包格式一致 |
+| 校验（可选） | 文本 | `NapCat.Shell.zip.sha256` | 可选 |
 
-## 安装时选项（10 秒超时，默认自动确认）
+准备就绪后：
 
-| 选项 | 默认 | 说明 |
-|------|------|------|
-| 包格式 | 自动识别 | 可选 deb / rpm |
-| 下载方式 | 直连 | 可选 `https://ghproxy.net/`（仅 GitHub） |
-| QQ 版本 | 最新 | 可输入序号选择最近 15 个版本 |
-| TUI-CLI | 安装 | 官方终端管理界面 |
+```bash
+# 若还没运行安装脚本
+cd /root/napcat_install   # 按实际路径
+bash install.sh
+# 选择: 2) 手动导入
+# 按提示放好文件后，在安装终端直接回车继续
+```
+
+也可先放好再装：
+
+```bash
+mkdir -p /root/napcat_install/packages
+# 上传 NapCat.Shell.zip 与 QQ deb/rpm 到该目录
+ls -lah /root/napcat_install/packages
+cd /root/napcat_install && bash install.sh
+```
 
 ## 装完后
 
 ```bash
 napcat
-```
-
-打开官方 TUI 管理界面。也可：
-
-```bash
-xvfb-run -a ~/Napcat/opt/QQ/qq --no-sandbox
 ```
 
 ## 安装位置
@@ -59,24 +80,12 @@ xvfb-run -a ~/Napcat/opt/QQ/qq --no-sandbox
 |------|------|
 | `~/Napcat` | 安装根目录 |
 | `~/Napcat/opt/QQ` | LinuxQQ |
-| `~/Napcat/opt/QQ/resources/app/app_launcher/napcat` | NapCat 插件 |
-| `/usr/local/bin/napcat` | TUI 命令（或 `~/.local/bin/napcat`） |
+| `~/Napcat/opt/QQ/resources/app/app_launcher/napcat` | NapCat |
+| `/usr/local/bin/napcat` | TUI 命令 |
 
 ## 基本功能
 
 - Rootless 安装 LinuxQQ + NapCat
-- 内置 `packages/NapCat.Shell.zip`（优先本地，失败再联网）
-- 校验并选择可用 QQ deb/rpm 版本
-- 默认安装 [NapCat-TUI-CLI](https://github.com/NapNeko/NapCat-TUI-CLI)
-- 检测已有 `~/Napcat`，可覆盖或退出
-- 每周同步 `data/qq_versions.json`
-
-## 目录
-
-```text
-napcat_install/
-├── install.sh
-├── packages/NapCat.Shell.zip
-├── data/qq_versions.json
-└── scripts/sync_qq_versions.py
-```
+- 直连下载 或 手动导入
+- 可选官方 TUI-CLI（`napcat` 终端界面）
+- QQ 版本列表 + 已有目录检测

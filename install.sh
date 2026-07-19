@@ -21,8 +21,8 @@ QQ_EXECUTABLE="${QQ_BASE_PATH}/qq"
 QQ_PACKAGE_JSON_PATH="${QQ_BASE_PATH}/resources/app/package.json"
 NAPCAT_DIR="${TARGET_FOLDER}/napcat"
 
-PROXY_PREFIX="https://ghproxy.net/"
-USE_PROXY="n"
+PACKAGE_MODE="direct"   # direct | manual
+MANUAL_PKG_DIR=""
 DOWNLOAD_DIR=""
 SYSTEM_ARCH=""
 DISTRO_ID=""
@@ -164,78 +164,170 @@ choose_package_format() {
     log "最终包格式: ${PACKAGE_FORMAT}"
 }
 
-choose_proxy() {
+choose_package_mode() {
     echo ""
-    log "下载方式选择 (10 秒后默认: 直连)"
+    log "资源获取方式 (10 秒后默认: 直连下载)"
     echo -e "  ${GREEN}1${NC}) 直连下载 [默认]"
-    echo -e "  ${CYAN}2${NC}) 代理下载 (${PROXY_PREFIX})"
+    echo -e "  ${CYAN}2${NC}) 手动导入安装包"
     local choice
     choice="$(prompt_timeout 10 "请输入序号 [1]: " "1")"
     case "${choice}" in
-        2|proxy|PROXY|y|Y)
-            USE_PROXY="y"
-            log "已选择代理下载: ${PROXY_PREFIX}"
+        2|manual|MANUAL|m|M)
+            PACKAGE_MODE="manual"
+            log "已选择: 手动导入"
             ;;
         *)
-            USE_PROXY="n"
-            log "已选择直连下载"
+            PACKAGE_MODE="direct"
+            log "已选择: 直连下载"
             ;;
     esac
 }
 
-proxy_url() {
-    local url="$1"
-    if [[ "${USE_PROXY}" == "y" ]]; then
-        # 仅对 GitHub 相关链接套代理
-        if [[ "${url}" == https://github.com/* || "${url}" == https://raw.githubusercontent.com/* || "${url}" == https://objects.githubusercontent.com/* || "${url}" == https://codeload.github.com/* ]]; then
-            echo "${PROXY_PREFIX}${url}"
-            return
+# 手动导入目录: 仓库 packages/ 优先, 否则当前目录 packages/
+manual_pkg_dir() {
+    if [[ -n "${MANUAL_PKG_DIR}" ]]; then
+        echo "${MANUAL_PKG_DIR}"
+        return
+    fi
+    if [[ -d "${SCRIPT_DIR}/packages" ]] || [[ -f "${SCRIPT_DIR}/install.sh" ]]; then
+        echo "${SCRIPT_DIR}/packages"
+    else
+        echo "$(pwd)/packages"
+    fi
+}
+
+print_manual_import_guide() {
+    local dir
+    dir="$(manual_pkg_dir)"
+    mkdir -p "${dir}"
+
+    echo ""
+    log "======== 手动导入说明 ========"
+    log "请将下列文件放到目录:"
+    echo -e "  ${CYAN}${dir}${NC}"
+    echo ""
+    log "必需文件:"
+    echo -e "  1) ${GREEN}NapCat.Shell.zip${NC}"
+    echo -e "     格式: zip"
+    echo -e "     文件名: NapCat.Shell.zip  (固定)"
+    echo -e "     路径: ${dir}/NapCat.Shell.zip"
+    echo -e "     来源示例: https://github.com/NapNeko/NapCatQQ/releases/latest/download/NapCat.Shell.zip"
+    echo ""
+    echo -e "  2) ${GREEN}LinuxQQ 安装包${NC}"
+    echo -e "     格式: .deb 或 .rpm (与当前选择的包格式一致: ${PACKAGE_FORMAT})"
+    echo -e "     架构: ${SYSTEM_ARCH}"
+    if [[ "${PACKAGE_FORMAT}" == "deb" ]]; then
+        if [[ "${SYSTEM_ARCH}" == "amd64" ]]; then
+            echo -e "     推荐文件名: QQ_*.deb  (如 QQ_3.2.29_260528_amd64_01.deb)"
+        elif [[ "${SYSTEM_ARCH}" == "arm64" ]]; then
+            echo -e "     推荐文件名: QQ_*_arm64_*.deb"
+        else
+            echo -e "     推荐文件名: QQ_*_${SYSTEM_ARCH}_*.deb"
+        fi
+    else
+        if [[ "${SYSTEM_ARCH}" == "amd64" ]]; then
+            echo -e "     推荐文件名: QQ_*_x86_64_*.rpm"
+        elif [[ "${SYSTEM_ARCH}" == "arm64" ]]; then
+            echo -e "     推荐文件名: QQ_*_aarch64_*.rpm"
+        else
+            echo -e "     推荐文件名: QQ_*_${SYSTEM_ARCH}_*.rpm"
         fi
     fi
-    echo "${url}"
+    echo -e "     路径: 放到 ${dir}/ 下任意一个匹配的 .${PACKAGE_FORMAT} 文件即可"
+    echo -e "     来源示例: https://rodert.github.io/qq-versions/ 或官方 QQ 下载页"
+    echo ""
+    log "可选文件:"
+    echo -e "  - NapCat.Shell.zip.sha256   (校验, 可选)"
+    echo -e "  - 固定别名: ${dir}/QQ.${PACKAGE_FORMAT}  (也可)"
+    echo ""
+    log "准备就绪后执行 (在本终端继续):"
+    echo -e "  ${CYAN}直接回车${NC}  -> 脚本检测文件并继续安装"
+    echo ""
+    log "或新开终端先拷贝再回来回车, 示例:"
+    echo -e "  ${CYAN}mkdir -p ${dir}${NC}"
+    echo -e "  ${CYAN}# 用 scp/sftp/面板上传 NapCat.Shell.zip 与 QQ.${PACKAGE_FORMAT}${NC}"
+    echo -e "  ${CYAN}# scp NapCat.Shell.zip QQ.${PACKAGE_FORMAT} user@host:${dir}/${NC}"
+    echo -e "  ${CYAN}ls -lah ${dir}${NC}"
+    log "=============================="
+}
+
+wait_manual_packages() {
+    local dir
+    dir="$(manual_pkg_dir)"
+    MANUAL_PKG_DIR="${dir}"
+    mkdir -p "${dir}"
+    print_manual_import_guide
+
+    while true; do
+        echo ""
+        read -r -p "文件已放好后按回车继续 (输入 q 退出): " ans </dev/tty || true
+        if [[ "${ans}" =~ ^[Qq]$ ]]; then
+            log "用户取消"
+            exit 0
+        fi
+
+        local napcat_ok="n" qq_ok="n" qq_file=""
+        if [[ -s "${dir}/NapCat.Shell.zip" ]]; then
+            if unzip -t "${dir}/NapCat.Shell.zip" >/dev/null 2>&1; then
+                napcat_ok="y"
+                log "已找到 NapCat.Shell.zip ($(du -h "${dir}/NapCat.Shell.zip" | awk '{print $1}'))"
+            else
+                log "错误: ${dir}/NapCat.Shell.zip 不是有效 zip"
+            fi
+        else
+            log "缺少: ${dir}/NapCat.Shell.zip"
+        fi
+
+        # QQ package candidates
+        if [[ -s "${dir}/QQ.${PACKAGE_FORMAT}" ]]; then
+            qq_file="${dir}/QQ.${PACKAGE_FORMAT}"
+        else
+            # pick newest matching package
+            local found
+            found="$(ls -1t "${dir}"/*.${PACKAGE_FORMAT} 2>/dev/null | head -n1 || true)"
+            if [[ -n "${found}" && -s "${found}" ]]; then
+                qq_file="${found}"
+            fi
+        fi
+        if [[ -n "${qq_file}" ]]; then
+            qq_ok="y"
+            log "已找到 QQ 包: ${qq_file} ($(du -h "${qq_file}" | awk '{print $1}'))"
+        else
+            log "缺少: ${dir}/ 下的 .${PACKAGE_FORMAT} 安装包 (或 QQ.${PACKAGE_FORMAT})"
+        fi
+
+        if [[ "${napcat_ok}" == "y" && "${qq_ok}" == "y" ]]; then
+            MANUAL_QQ_PKG="${qq_file}"
+            MANUAL_NAPCAT_ZIP="${dir}/NapCat.Shell.zip"
+            log "手动导入文件检查通过, 继续安装"
+            return 0
+        fi
+        log "文件未齐全, 请补齐后再次回车"
+    done
 }
 
 download_file() {
     local url="$1"
     local dest="$2"
-    local try_urls=()
-    local u
-
-    if [[ "${USE_PROXY}" == "y" ]]; then
-        try_urls+=("$(proxy_url "${url}")")
-        # 代理失败时再试直连
-        try_urls+=("${url}")
-    else
-        try_urls+=("${url}")
-        # GitHub 资源直连失败时自动走 ghproxy
-        if [[ "${url}" == https://github.com/* || "${url}" == https://raw.githubusercontent.com/* || "${url}" == https://objects.githubusercontent.com/* || "${url}" == https://codeload.github.com/* ]]; then
-            try_urls+=("${PROXY_PREFIX}${url}")
-        fi
-    fi
-
     log "下载: ${url}"
     log "保存到: ${dest}"
-    for u in "${try_urls[@]}"; do
-        log "请求: ${u}"
-        rm -f "${dest}"
-        if curl -k -L --connect-timeout 20 --max-time 600 --retry 2 --retry-delay 2 -# "${u}" -o "${dest}"; then
-            if [[ -s "${dest}" ]]; then
-                log "下载成功: ${dest} ($(du -h "${dest}" | awk '{print $1}'))"
-                return 0
-            fi
-        fi
-        log "警告: 该源失败, 尝试下一源..."
-    done
-    log "错误: 下载失败: ${url}"
-    return 1
+    rm -f "${dest}"
+    if ! curl -k -L --connect-timeout 20 --max-time 600 --retry 3 --retry-delay 2 -# "${url}" -o "${dest}"; then
+        log "错误: 下载失败: ${url}"
+        return 1
+    fi
+    if [[ ! -s "${dest}" ]]; then
+        log "错误: 下载文件为空: ${dest}"
+        return 1
+    fi
+    log "下载成功: ${dest} ($(du -h "${dest}" | awk '{print $1}'))"
 }
 
-# 预检下载链接是否可达 (拉前 2KB)
+# 预检下载链接是否可达 (拉前 2KB, 仅直连)
 url_reachable() {
     local url="$1"
-    local final_url code size
-    final_url="$(proxy_url "${url}")"
-    read -r code size < <(curl -k -s -o /dev/null -w "%{http_code} %{size_download}" -L --connect-timeout 12 --max-time 25 -A "Mozilla/5.0" -r 0-2047 "${final_url}" || echo "000 0")
+    local code size
+    read -r code size < <(curl -k -s -o /dev/null -w "%{http_code} %{size_download}" -L --connect-timeout 12 --max-time 25 -A "Mozilla/5.0" -r 0-2047 "${url}" || echo "000 0")
     if [[ "${code}" =~ ^[0-9]+$ && "${code}" -lt 400 && "${size}" -gt 0 ]]; then
         return 0
     fi
@@ -383,10 +475,14 @@ choose_qq_version() {
     [[ -n "${SELECTED_QQ_SHA256}" ]] && log "SHA256: ${SELECTED_QQ_SHA256}"
     [[ -n "${SELECTED_QQ_MD5}" ]] && log "MD5: ${SELECTED_QQ_MD5}"
 
-    # 安装前校验链接；失效则在同版本/架构/格式中寻找可用替代
-    resolve_qq_download_url "${SELECTED_QQ_VERSION}" "${arch}" "${fmt}"
-
-    log "最终下载链接: ${SELECTED_QQ_URL}"
+    if [[ "${PACKAGE_MODE}" == "manual" ]]; then
+        log "手动模式: 跳过在线 QQ 链接校验, 将使用本地导入包"
+        log "列表参考版本: ${SELECTED_QQ_VERSION} (${arch}/${fmt})"
+    else
+        # 安装前校验链接；失效则在同版本/架构/格式中寻找可用替代
+        resolve_qq_download_url "${SELECTED_QQ_VERSION}" "${arch}" "${fmt}"
+        log "最终下载链接: ${SELECTED_QQ_URL}"
+    fi
     log "安装位置: ${INSTALL_BASE_DIR}"
     log "QQ 路径: ${QQ_BASE_PATH}"
     log "NapCat 路径: ${NAPCAT_DIR}"
@@ -475,11 +571,25 @@ check_existing_install() {
 
 install_linuxqq() {
     mkdir -p "${DOWNLOAD_DIR}"
+    if [[ "${PACKAGE_MODE}" == "manual" && -n "${MANUAL_QQ_PKG:-}" ]]; then
+        SELECTED_QQ_FILENAME="$(basename "${MANUAL_QQ_PKG}")"
+    fi
     local pkg_path="${DOWNLOAD_DIR}/${SELECTED_QQ_FILENAME}"
 
-    log "开始下载 LinuxQQ..."
+    log "开始获取 LinuxQQ 安装包..."
     log "目标安装目录: ${INSTALL_BASE_DIR}"
-    download_file "${SELECTED_QQ_URL}" "${pkg_path}"
+    if [[ "${PACKAGE_MODE}" == "manual" && -n "${MANUAL_QQ_PKG:-}" && -s "${MANUAL_QQ_PKG}" ]]; then
+        log "使用手动导入的 QQ 包: ${MANUAL_QQ_PKG}"
+        cp -f "${MANUAL_QQ_PKG}" "${pkg_path}"
+        log "已复制到: ${pkg_path} ($(du -h "${pkg_path}" | awk '{print $1}'))"
+    else
+        log "直连下载: ${SELECTED_QQ_URL}"
+        if ! download_file "${SELECTED_QQ_URL}" "${pkg_path}"; then
+            log "错误: QQ 下载失败"
+            log "可改用手动导入: 将 .${PACKAGE_FORMAT} 包放到 $(manual_pkg_dir)/ 后重新运行"
+            exit 1
+        fi
+    fi
 
     if [[ -n "${SELECTED_QQ_SHA256}" ]] && need_cmd sha256sum; then
         local actual
@@ -540,71 +650,27 @@ install_linuxqq() {
     log "QQ 可执行文件: ${QQ_EXECUTABLE}"
 }
 
-# 多源下载 NapCat.Shell.zip (本仓库内置包优先, 失败再官方; 自动尝试 ghproxy)
-download_napcat_shell_zip() {
-    local dest="$1"
-    local repo="${NAPCAT_INSTALL_REPO:-Qiscard/napcat_install}"
-    local official="https://github.com/NapNeko/NapCatQQ/releases/latest/download/NapCat.Shell.zip"
-    local bundled_raw="https://raw.githubusercontent.com/${repo}/main/packages/NapCat.Shell.zip"
-    local bundled_jsdelivr="https://cdn.jsdelivr.net/gh/${repo}@main/packages/NapCat.Shell.zip"
-    # ghproxy 对 raw/jsdelivr/github release 均可拼接
-    local candidates=()
-
-    # 用户已选代理时: 代理源优先
-    if [[ "${USE_PROXY}" == "y" ]]; then
-        candidates+=(
-            "${PROXY_PREFIX}${bundled_raw}"
-            "${PROXY_PREFIX}${official}"
-            "${bundled_jsdelivr}"
-            "${bundled_raw}"
-            "${official}"
-        )
-    else
-        candidates+=(
-            "${bundled_jsdelivr}"
-            "${bundled_raw}"
-            "${PROXY_PREFIX}${bundled_raw}"
-            "${PROXY_PREFIX}${official}"
-            "${official}"
-        )
-    fi
-
-    local url
-    local tried=0
-    for url in "${candidates[@]}"; do
-        tried=$((tried + 1))
-        log "尝试下载源 [${tried}/${#candidates[@]}]: ${url}"
-        rm -f "${dest}"
-        # 大文件: 更长超时, 断点续传式重试
-        if curl -k -L --connect-timeout 15 --max-time 600 --retry 2 --retry-delay 2 -# "${url}" -o "${dest}"; then
-            if [[ -s "${dest}" ]] && unzip -t "${dest}" >/dev/null 2>&1; then
-                log "下载成功: ${dest} ($(du -h "${dest}" | awk '{print $1}'))"
-                log "来源: ${url}"
-                return 0
-            fi
-            log "警告: 文件无效或不是 zip, 换源重试"
-            rm -f "${dest}"
-        else
-            log "警告: 下载失败, 换源重试"
-            rm -f "${dest}"
-        fi
-    done
-    return 1
-}
-
 download_and_install_napcat() {
     local zip_path="${DOWNLOAD_DIR}/NapCat.Shell.zip"
     local local_zip=""
     local cand expect actual
+    local napcat_url="https://github.com/NapNeko/NapCatQQ/releases/latest/download/NapCat.Shell.zip"
 
-    # 1) 优先使用仓库/当前目录内置包
-    for cand in         "${SCRIPT_DIR}/packages/NapCat.Shell.zip"         "${SCRIPT_DIR}/NapCat.Shell.zip"         "./packages/NapCat.Shell.zip"         "./NapCat.Shell.zip"
-    do
-        if [[ -f "${cand}" && -s "${cand}" ]]; then
-            local_zip="${cand}"
-            break
-        fi
-    done
+    # 手动导入优先
+    if [[ "${PACKAGE_MODE}" == "manual" && -n "${MANUAL_NAPCAT_ZIP:-}" && -s "${MANUAL_NAPCAT_ZIP}" ]]; then
+        local_zip="${MANUAL_NAPCAT_ZIP}"
+    fi
+
+    # 其次仓库内置/当前目录
+    if [[ -z "${local_zip}" ]]; then
+        for cand in             "${SCRIPT_DIR}/packages/NapCat.Shell.zip"             "${SCRIPT_DIR}/NapCat.Shell.zip"             "./packages/NapCat.Shell.zip"             "./NapCat.Shell.zip"
+        do
+            if [[ -f "${cand}" && -s "${cand}" ]]; then
+                local_zip="${cand}"
+                break
+            fi
+        done
+    fi
 
     if [[ -n "${local_zip}" ]]; then
         log "使用本地 NapCat 包: ${local_zip}"
@@ -613,9 +679,13 @@ download_and_install_napcat() {
             expect="$(awk 'NR==1{print $1}' "${local_zip}.sha256")"
             actual="$(sha256sum "${local_zip}" | awk '{print $1}')"
             if [[ -n "${expect}" && "${expect}" != "${actual}" ]]; then
-                log "警告: 本地包 SHA256 不匹配, 将尝试其他来源"
+                log "警告: 本地包 SHA256 不匹配"
                 log "期望: ${expect}"
                 log "实际: ${actual}"
+                if [[ "${PACKAGE_MODE}" == "manual" ]]; then
+                    log "错误: 手动导入的 NapCat 包校验失败"
+                    exit 1
+                fi
                 local_zip=""
             elif [[ -n "${expect}" ]]; then
                 log "本地包 SHA256 校验通过"
@@ -627,10 +697,20 @@ download_and_install_napcat() {
         cp -f "${local_zip}" "${zip_path}"
         log "已复制本地包到下载目录: ${zip_path}"
     else
-        # 2) 多源在线下载: 本仓库内置包优先, 再官方 release; 自动尝试代理
-        log "未找到本地包, 开始多源下载 NapCat.Shell.zip ..."
-        if ! download_napcat_shell_zip "${zip_path}"; then
-            log "错误: NapCat 所有下载源均失败"
+        if [[ "${PACKAGE_MODE}" == "manual" ]]; then
+            log "错误: 手动模式未找到 NapCat.Shell.zip"
+            print_manual_import_guide
+            exit 1
+        fi
+        log "直连下载 NapCat.Shell.zip ..."
+        log "下载链接: ${napcat_url}"
+        if ! download_file "${napcat_url}" "${zip_path}"; then
+            log "错误: NapCat 下载失败"
+            log "可改用手动导入: 将 NapCat.Shell.zip 放到 $(manual_pkg_dir)/ 后重新运行"
+            exit 1
+        fi
+        if ! unzip -t "${zip_path}" >/dev/null 2>&1; then
+            log "错误: 下载的 NapCat 包无效"
             exit 1
         fi
     fi
@@ -884,7 +964,7 @@ show_summary() {
     log "QQ 版本: ${SELECTED_QQ_VERSION}"
     log "系统架构: ${SYSTEM_ARCH}"
     log "包格式: ${PACKAGE_FORMAT}"
-    log "下载方式: $([ "${USE_PROXY}" = "y" ] && echo "代理 ${PROXY_PREFIX}" || echo "直连")"
+    log "获取方式: $([ "${PACKAGE_MODE}" = "manual" ] && echo "手动导入" || echo "直连下载")"
     echo ""
     log "快捷命令 (官方 TUI-CLI):"
     if [[ -n "${NAPCAT_CMD_PATH:-}" ]]; then
@@ -911,7 +991,7 @@ main() {
     detect_arch
     detect_distro
     choose_package_format
-    choose_proxy
+    choose_package_mode
 
     DOWNLOAD_DIR="${WORKDIR}/downloads"
     mkdir -p "${DOWNLOAD_DIR}"
@@ -921,6 +1001,9 @@ main() {
 
     ensure_deps
     choose_qq_version
+    if [[ "${PACKAGE_MODE}" == "manual" ]]; then
+        wait_manual_packages
+    fi
     check_existing_install
     install_linuxqq
     download_and_install_napcat
