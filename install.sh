@@ -198,22 +198,36 @@ proxy_url() {
 download_file() {
     local url="$1"
     local dest="$2"
-    local final_url
-    final_url="$(proxy_url "${url}")"
+    local try_urls=()
+    local u
+
+    if [[ "${USE_PROXY}" == "y" ]]; then
+        try_urls+=("$(proxy_url "${url}")")
+        # 代理失败时再试直连
+        try_urls+=("${url}")
+    else
+        try_urls+=("${url}")
+        # GitHub 资源直连失败时自动走 ghproxy
+        if [[ "${url}" == https://github.com/* || "${url}" == https://raw.githubusercontent.com/* || "${url}" == https://objects.githubusercontent.com/* || "${url}" == https://codeload.github.com/* ]]; then
+            try_urls+=("${PROXY_PREFIX}${url}")
+        fi
+    fi
+
     log "下载: ${url}"
-    if [[ "${final_url}" != "${url}" ]]; then
-        log "实际请求: ${final_url}"
-    fi
     log "保存到: ${dest}"
-    if ! curl -k -L --connect-timeout 20 --retry 3 --retry-delay 2 -# "${final_url}" -o "${dest}"; then
-        log "错误: 下载失败: ${url}"
-        return 1
-    fi
-    if [[ ! -s "${dest}" ]]; then
-        log "错误: 下载文件为空: ${dest}"
-        return 1
-    fi
-    log "下载成功: ${dest} ($(du -h "${dest}" | awk '{print $1}'))"
+    for u in "${try_urls[@]}"; do
+        log "请求: ${u}"
+        rm -f "${dest}"
+        if curl -k -L --connect-timeout 20 --max-time 600 --retry 2 --retry-delay 2 -# "${u}" -o "${dest}"; then
+            if [[ -s "${dest}" ]]; then
+                log "下载成功: ${dest} ($(du -h "${dest}" | awk '{print $1}'))"
+                return 0
+            fi
+        fi
+        log "警告: 该源失败, 尝试下一源..."
+    done
+    log "错误: 下载失败: ${url}"
+    return 1
 }
 
 # 预检下载链接是否可达 (拉前 2KB)
@@ -526,13 +540,64 @@ install_linuxqq() {
     log "QQ 可执行文件: ${QQ_EXECUTABLE}"
 }
 
+# 多源下载 NapCat.Shell.zip (本仓库内置包优先, 失败再官方; 自动尝试 ghproxy)
+download_napcat_shell_zip() {
+    local dest="$1"
+    local repo="${NAPCAT_INSTALL_REPO:-Qiscard/napcat_install}"
+    local official="https://github.com/NapNeko/NapCatQQ/releases/latest/download/NapCat.Shell.zip"
+    local bundled_raw="https://raw.githubusercontent.com/${repo}/main/packages/NapCat.Shell.zip"
+    local bundled_jsdelivr="https://cdn.jsdelivr.net/gh/${repo}@main/packages/NapCat.Shell.zip"
+    # ghproxy 对 raw/jsdelivr/github release 均可拼接
+    local candidates=()
+
+    # 用户已选代理时: 代理源优先
+    if [[ "${USE_PROXY}" == "y" ]]; then
+        candidates+=(
+            "${PROXY_PREFIX}${bundled_raw}"
+            "${PROXY_PREFIX}${official}"
+            "${bundled_jsdelivr}"
+            "${bundled_raw}"
+            "${official}"
+        )
+    else
+        candidates+=(
+            "${bundled_jsdelivr}"
+            "${bundled_raw}"
+            "${PROXY_PREFIX}${bundled_raw}"
+            "${PROXY_PREFIX}${official}"
+            "${official}"
+        )
+    fi
+
+    local url
+    local tried=0
+    for url in "${candidates[@]}"; do
+        tried=$((tried + 1))
+        log "尝试下载源 [${tried}/${#candidates[@]}]: ${url}"
+        rm -f "${dest}"
+        # 大文件: 更长超时, 断点续传式重试
+        if curl -k -L --connect-timeout 15 --max-time 600 --retry 2 --retry-delay 2 -# "${url}" -o "${dest}"; then
+            if [[ -s "${dest}" ]] && unzip -t "${dest}" >/dev/null 2>&1; then
+                log "下载成功: ${dest} ($(du -h "${dest}" | awk '{print $1}'))"
+                log "来源: ${url}"
+                return 0
+            fi
+            log "警告: 文件无效或不是 zip, 换源重试"
+            rm -f "${dest}"
+        else
+            log "警告: 下载失败, 换源重试"
+            rm -f "${dest}"
+        fi
+    done
+    return 1
+}
+
 download_and_install_napcat() {
     local zip_path="${DOWNLOAD_DIR}/NapCat.Shell.zip"
-    local napcat_url="https://github.com/NapNeko/NapCatQQ/releases/latest/download/NapCat.Shell.zip"
     local local_zip=""
-    local cand
+    local cand expect actual
 
-    # 优先使用仓库内置包
+    # 1) 优先使用仓库/当前目录内置包
     for cand in         "${SCRIPT_DIR}/packages/NapCat.Shell.zip"         "${SCRIPT_DIR}/NapCat.Shell.zip"         "./packages/NapCat.Shell.zip"         "./NapCat.Shell.zip"
     do
         if [[ -f "${cand}" && -s "${cand}" ]]; then
@@ -545,16 +610,15 @@ download_and_install_napcat() {
         log "使用本地 NapCat 包: ${local_zip}"
         log "文件大小: $(du -h "${local_zip}" | awk '{print $1}')"
         if [[ -f "${local_zip}.sha256" ]]; then
-            local expect actual
             expect="$(awk 'NR==1{print $1}' "${local_zip}.sha256")"
             actual="$(sha256sum "${local_zip}" | awk '{print $1}')"
-            if [[ -n "${expect}" && "${expect}" == "${actual}" ]]; then
-                log "本地包 SHA256 校验通过"
-            elif [[ -n "${expect}" ]]; then
-                log "警告: 本地包 SHA256 不匹配, 将尝试在线下载"
+            if [[ -n "${expect}" && "${expect}" != "${actual}" ]]; then
+                log "警告: 本地包 SHA256 不匹配, 将尝试其他来源"
                 log "期望: ${expect}"
                 log "实际: ${actual}"
                 local_zip=""
+            elif [[ -n "${expect}" ]]; then
+                log "本地包 SHA256 校验通过"
             fi
         fi
     fi
@@ -563,10 +627,10 @@ download_and_install_napcat() {
         cp -f "${local_zip}" "${zip_path}"
         log "已复制本地包到下载目录: ${zip_path}"
     else
-        log "未找到可用本地包, 开始在线下载 NapCat..."
-        log "下载链接: ${napcat_url}"
-        if ! download_file "${napcat_url}" "${zip_path}"; then
-            log "错误: NapCat 下载失败"
+        # 2) 多源在线下载: 本仓库内置包优先, 再官方 release; 自动尝试代理
+        log "未找到本地包, 开始多源下载 NapCat.Shell.zip ..."
+        if ! download_napcat_shell_zip "${zip_path}"; then
+            log "错误: NapCat 所有下载源均失败"
             exit 1
         fi
     fi

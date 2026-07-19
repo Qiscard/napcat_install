@@ -30,7 +30,7 @@ GitHub 较慢时：
 bash <(curl -fsSL https://ghproxy.net/https://raw.githubusercontent.com/Qiscard/napcat_install/main/install.sh)
 ```
 
-> 克隆安装会优先使用仓库内置 `packages/NapCat.Shell.zip`；在线一键若无本地包，则自动从 GitHub 下载。
+> 克隆安装优先用本地 `packages/NapCat.Shell.zip`；在线安装会按顺序尝试：jsDelivr / 本仓库 raw / ghproxy / 官方 GitHub。
 
 ## 安装时选项（10 秒超时，默认自动确认）
 
