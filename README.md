@@ -72,7 +72,20 @@ NAPCAT_INSTALL_MODE=manual bash install.sh
 napcat
 ```
 
-脚本会将启动命令安装到 `~/.local/bin/napcat`。若该目录不在 `PATH` 中，可执行：
+安装器会安装 QQ 运行依赖（包括 `xvfb`），并在可写时将启动命令链接到
+`/usr/local/bin/napcat`。root 用户在有 systemd 的服务器上安装时，安装器还会
+创建并启动 `napcat.service`，并设为开机自启。
+
+```bash
+systemctl status napcat
+systemctl restart napcat
+journalctl -u napcat -f
+```
+
+设置 `NAPCAT_INSTALL_SERVICE=0` 可跳过 systemd 服务创建。非 root 用户或没有
+systemd 的环境仍可直接运行启动命令。
+
+若该目录不在 `PATH` 中，可执行：
 
 ```bash
 ~/.local/bin/napcat
