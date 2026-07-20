@@ -263,6 +263,22 @@ ensure_deps() {
     log "Deps installed"
 }
 
+gitee_download_napcat() {
+    local dest="$1"
+    local urls=(
+        "https://gitee.com/NapNeko/NapCatQQ/releases/latest/download/NapCat.Shell.zip"
+        "https://raw.gitmirror.com/NapNeko/NapCatQQ/main/NapCat.Shell.zip"
+    )
+    for url in "${urls[@]}"; do
+        log "Gitee source: ${url}"
+        if download_file "${url}" "${dest}" && unzip -t "${dest}" >/dev/null 2>&1; then
+            return 0
+        fi
+        rm -f "${dest}"
+    done
+    return 1
+}
+
 install_linuxqq() {
     mkdir -p "${DOWNLOAD_DIR}"
     if [[ "${DOWNLOAD_MODE}" == "manual" && -n "${MANUAL_QQ_PKG:-}" ]]; then
@@ -333,10 +349,16 @@ download_and_install_napcat() {
         if [[ "${DOWNLOAD_MODE}" == "manual" ]]; then log "Error: no NapCat.Shell.zip"; print_manual_import_guide; exit 1; fi
         if [[ "${DOWNLOAD_MODE}" == "gitee" ]]; then
             log "Gitee download NapCat..."
-            gitee_download_napcat "${zip_path}" || { log "Error: Gitee failed"; exit 1; }
+            if ! gitee_download_napcat "${zip_path}"; then
+                log "Gitee failed, falling back to GitHub..."
+                download_file "${napcat_url}" "${zip_path}" || { log "Error: download failed"; exit 1; }
+            fi
         else
             log "Direct download NapCat..."
-            download_file "${napcat_url}" "${zip_path}" || { log "Error: download failed"; exit 1; }
+            if ! download_file "${napcat_url}" "${zip_path}"; then
+                log "Direct failed, trying Gitee sources..."
+                gitee_download_napcat "${zip_path}" || { log "Error: all download sources failed"; exit 1; }
+            fi
         fi
         unzip -t "${zip_path}" >/dev/null 2>&1 || { log "Error: invalid zip"; exit 1; }
     fi
