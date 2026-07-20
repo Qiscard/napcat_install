@@ -36,6 +36,8 @@ SELECTED_QQ_FILENAME=""
 SELECTED_QQ_URL=""
 SELECTED_QQ_SHA256=""
 NAPCAT_CMD_PATH=""
+SYSTEMD_SERVICE_PATH="/etc/systemd/system/napcat.service"
+DEPENDENCIES_READY=0
 
 cleanup() {
     [[ -d "${WORKDIR}" ]] && rm -rf "${WORKDIR}"
@@ -126,30 +128,43 @@ choose_download_mode() {
 }
 
 ensure_dependencies() {
-    local missing=() command
+    [[ "${DEPENDENCIES_READY}" -eq 1 ]] && return 0
+    local missing=() command packages=()
     for command in curl unzip jq; do
         need_cmd "${command}" || missing+=("${command}")
     done
     if [[ "${PACKAGE_FORMAT}" == "deb" ]]; then
         need_cmd dpkg || missing+=("dpkg")
+        packages=(
+            curl unzip jq dpkg
+            libasound2 libatk-bridge2.0-0 libatk1.0-0 libcups2 libgbm1
+            libgtk-3-0 libnss3 libxdamage1 libxkbcommon0
+            xvfb xauth dbus-x11
+        )
     else
         need_cmd rpm2cpio || missing+=("rpm2cpio")
         need_cmd cpio || missing+=("cpio")
+        packages=(
+            curl unzip jq cpio rpm
+            alsa-lib at-spi2-atk atk cups-libs gtk3 libXdamage libxkbcommon
+            mesa-libgbm nss xauth xorg-x11-server-Xvfb dbus-x11
+        )
     fi
-    [[ ${#missing[@]} -eq 0 ]] && return 0
 
+    # QQ is an Electron application. Its executable needs desktop libraries too.
     local sudo_cmd=()
     [[ "$(id -u)" -eq 0 ]] || { need_cmd sudo || die "缺少依赖: ${missing[*]}，且 sudo 不可用"; sudo_cmd=(sudo); }
     if need_cmd apt-get; then
         "${sudo_cmd[@]}" apt-get update -y
-        "${sudo_cmd[@]}" apt-get install -y curl unzip jq dpkg
+        "${sudo_cmd[@]}" apt-get install -y "${packages[@]}"
     elif need_cmd dnf; then
-        "${sudo_cmd[@]}" dnf install -y curl unzip jq cpio rpm
+        "${sudo_cmd[@]}" dnf install -y "${packages[@]}"
     elif need_cmd yum; then
-        "${sudo_cmd[@]}" yum install -y curl unzip jq cpio rpm
+        "${sudo_cmd[@]}" yum install -y "${packages[@]}"
     else
-        die "请先安装依赖: ${missing[*]}"
+        die "请先安装依赖: ${packages[*]}"
     fi
+    DEPENDENCIES_READY=1
 }
 
 prepare_qq_versions_file() {
@@ -264,18 +279,75 @@ install_start_command() {
 set -euo pipefail
 QQ_BIN="${QQ_EXECUTABLE}"
 if command -v xvfb-run >/dev/null 2>&1; then
+    if command -v dbus-run-session >/dev/null 2>&1; then
+        exec xvfb-run -a dbus-run-session -- "\${QQ_BIN}" --no-sandbox "\$@"
+    fi
     exec xvfb-run -a "\${QQ_BIN}" --no-sandbox "\$@"
+fi
+if command -v dbus-run-session >/dev/null 2>&1; then
+    exec dbus-run-session -- "\${QQ_BIN}" --no-sandbox "\$@"
 fi
 exec "\${QQ_BIN}" --no-sandbox "\$@"
 EOF
     chmod 755 "${NAPCAT_CMD_PATH}"
+
+    if [[ "$(id -u)" -eq 0 || -w /usr/local/bin ]]; then
+        ln -sfn "${NAPCAT_CMD_PATH}" /usr/local/bin/napcat
+        log "已安装全局启动命令: /usr/local/bin/napcat"
+    fi
+}
+
+install_systemd_service() {
+    local mode="${NAPCAT_INSTALL_SERVICE:-auto}"
+    case "${mode}" in
+        0|false|no) return 0 ;;
+        auto)
+            [[ "$(id -u)" -eq 0 && -d /run/systemd/system ]] || return 0
+            ;;
+        1|true|yes)
+            [[ "$(id -u)" -eq 0 ]] || die "NAPCAT_INSTALL_SERVICE=1 需要 root 权限"
+            [[ -d /run/systemd/system ]] || die "未检测到 systemd，无法创建系统服务"
+            ;;
+        *) die "NAPCAT_INSTALL_SERVICE 仅支持 auto、1 或 0" ;;
+    esac
+
+    cat > "${SYSTEMD_SERVICE_PATH}" <<EOF
+[Unit]
+Description=NapCat QQ client
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=$(id -un)
+WorkingDirectory=${INSTALL_BASE_DIR}
+Environment=HOME=${HOME}
+Environment=XDG_RUNTIME_DIR=/run/napcat
+RuntimeDirectory=napcat
+RuntimeDirectoryMode=0700
+ExecStart=${NAPCAT_CMD_PATH}
+Restart=on-failure
+RestartSec=5
+KillMode=mixed
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    systemctl daemon-reload
+    systemctl enable --now napcat.service
+    log "NapCat 服务已启动并设置为开机自启"
 }
 
 show_summary() {
     printf '\n安装完成。\n'
     printf '安装位置: %s\n' "${INSTALL_BASE_DIR}"
     printf '启动命令: %s\n' "${NAPCAT_CMD_PATH}"
-    printf '若 ~/.local/bin 已在 PATH 中，可直接运行: napcat\n'
+    if [[ -L /usr/local/bin/napcat ]]; then
+        printf '启动: napcat 或 systemctl status napcat\n'
+    else
+        printf '若 ~/.local/bin 已在 PATH 中，可直接运行: napcat\n'
+    fi
+    printf '设置 NAPCAT_INSTALL_SERVICE=0 可跳过 systemd 服务创建。\n'
 }
 
 main() {
@@ -308,6 +380,7 @@ main() {
     install_qq
     install_napcat
     install_start_command
+    install_systemd_service
     show_summary
 }
 
