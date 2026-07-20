@@ -21,6 +21,7 @@ readonly QQ_PACKAGE_JSON_PATH="${QQ_BASE_PATH}/resources/app/package.json"
 readonly NAPCAT_DIR="${QQ_BASE_PATH}/resources/app/app_launcher/napcat"
 readonly DIRECT_NAPCAT_URL="https://github.com/NapNeko/NapCatQQ/releases/latest/download/NapCat.Shell.zip"
 readonly GITEE_NAPCAT_URL="https://gitee.com/qiscard/napcat_install/raw/main/packages/NapCat.Shell.zip"
+readonly GITEE_REPOSITORY_ARCHIVE_URL="https://gitee.com/qiscard/napcat_install/repository/archive/main.zip"
 readonly DIRECT_QQ_VERSIONS_URL="https://raw.githubusercontent.com/Qiscard/napcat_install/main/data/qq_versions.json"
 readonly GITEE_QQ_VERSIONS_URL="https://gitee.com/qiscard/napcat_install/raw/main/data/qq_versions.json"
 
@@ -186,6 +187,24 @@ download_file() {
     is_large_enough "${destination}" "${minimum_size}" || { rm -f "${destination}"; return 1; }
 }
 
+download_gitee_napcat() {
+    local destination="$1"
+    if download_file "${GITEE_NAPCAT_URL}" "${destination}" "${NAPCAT_MIN_SIZE}"; then
+        return 0
+    fi
+
+    # Gitee may deny raw requests for large files. Its repository archive is a
+    # signed Gitee download URL and contains the same tracked package.
+    local archive="${WORKDIR}/downloads/gitee-repository.zip"
+    log "Gitee 单文件下载失败，尝试 Gitee 仓库归档直链。"
+    if ! download_file "${GITEE_REPOSITORY_ARCHIVE_URL}" "${archive}" 0; then
+        return 1
+    fi
+    rm -f "${destination}"
+    unzip -p "${archive}" '*/packages/NapCat.Shell.zip' > "${destination}" || return 1
+    is_large_enough "${destination}" "${NAPCAT_MIN_SIZE}" || { rm -f "${destination}"; return 1; }
+}
+
 download_missing_packages() {
     mkdir -p "${WORKDIR}/downloads"
     if [[ -z "${QQ_PACKAGE}" ]]; then
@@ -199,9 +218,11 @@ download_missing_packages() {
     fi
     if [[ -z "${NAPCAT_PACKAGE}" ]]; then
         NAPCAT_PACKAGE="${WORKDIR}/downloads/NapCat.Shell.zip"
-        local napcat_url="${DIRECT_NAPCAT_URL}"
-        [[ "${DOWNLOAD_MODE}" == "gitee" ]] && napcat_url="${GITEE_NAPCAT_URL}"
-        download_file "${napcat_url}" "${NAPCAT_PACKAGE}" "${NAPCAT_MIN_SIZE}" || die "NapCat 下载失败"
+        if [[ "${DOWNLOAD_MODE}" == "gitee" ]]; then
+            download_gitee_napcat "${NAPCAT_PACKAGE}" || die "NapCat 的 Gitee 下载失败"
+        else
+            download_file "${DIRECT_NAPCAT_URL}" "${NAPCAT_PACKAGE}" "${NAPCAT_MIN_SIZE}" || die "NapCat 下载失败"
+        fi
     fi
 }
 

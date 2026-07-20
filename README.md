@@ -35,7 +35,7 @@ bash <(curl -fsSL https://gitee.com/qiscard/napcat_install/raw/main/install.sh)
 脚本会先检查 `packages/` 内的安装包。QQ 包大于 100 MB、`NapCat.Shell.zip` 大于 20 MB 时视为存在，存在的包会跳过下载。缺包时可选择：
 
 1. 直连下载：按直链顺序下载缺失包。
-2. Gitee 下载：使用 Gitee 的 NapCat 直链下载缺失的 NapCat 包；QQ 仍使用版本列表中的腾讯官方直链。
+2. Gitee 下载：依次尝试 Gitee 的 NapCat 单文件直链和仓库归档直链；QQ 仍使用版本列表中的腾讯官方直链。
 3. 手动导入：检查目标位置；缺包时输出文件格式与位置，并提示“导入成功后重新运行手动模式”后结束运行。
 
 可用环境变量跳过交互：`NAPCAT_INSTALL_MODE=direct`、`NAPCAT_INSTALL_MODE=gitee` 或 `NAPCAT_INSTALL_MODE=manual`。
