@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# NapCat 精简安装脚本 (Shell Rootless)
-# 基于 NapCat-Installer，移除 Docker/TUI/多代理测速等功能
+# NapCat Installer (Simplified)
+# Features: skip-if-exists, gitee/manual modes, size-based detection
 
 set -euo pipefail
 
@@ -21,8 +21,7 @@ QQ_EXECUTABLE="${QQ_BASE_PATH}/qq"
 QQ_PACKAGE_JSON_PATH="${QQ_BASE_PATH}/resources/app/package.json"
 NAPCAT_DIR="${TARGET_FOLDER}/napcat"
 
-PACKAGE_MODE="direct"   # direct | manual
-MANUAL_PKG_DIR=""
+DOWNLOAD_MODE="direct"   # direct | gitee | manual
 DOWNLOAD_DIR=""
 SYSTEM_ARCH=""
 DISTRO_ID=""
@@ -35,160 +34,118 @@ SELECTED_QQ_FILENAME=""
 SELECTED_QQ_MD5=""
 FORCE_OVERWRITE="n"
 NAPCAT_CMD_PATH=""
+MANUAL_PKG_DIR=""
+MANUAL_QQ_PKG=""
+MANUAL_NAPCAT_ZIP=""
+
+QQ_MIN_SIZE=$((100 * 1024 * 1024))
+NAPCAT_MIN_SIZE=$((20 * 1024 * 1024))
 
 QQ_VERSIONS_FILE="${SCRIPT_DIR}/data/qq_versions.json"
-# 可通过环境变量覆盖: NAPCAT_INSTALL_REPO=owner/name
 NAPCAT_INSTALL_REPO="${NAPCAT_INSTALL_REPO:-Qiscard/napcat_install}"
 QQ_VERSIONS_REMOTE_CANDIDATES=(
     "https://raw.githubusercontent.com/${NAPCAT_INSTALL_REPO}/main/data/qq_versions.json"
     "https://cdn.jsdelivr.net/gh/${NAPCAT_INSTALL_REPO}@main/data/qq_versions.json"
+    "https://gitee.com/${NAPCAT_INSTALL_REPO}/raw/main/data/qq_versions.json"
 )
 
 cleanup() {
-    if [[ -n "${WORKDIR:-}" && -d "${WORKDIR}" ]]; then
-        rm -rf "${WORKDIR}"
-    fi
+    if [[ -n "${WORKDIR:-}" && -d "${WORKDIR}" ]]; then rm -rf "${WORKDIR}"; fi
 }
 trap cleanup EXIT
 
 log() {
     local message="[$(date +'%Y-%m-%d %H:%M:%S')]: $1"
     case "$1" in
-        *"失败"*|*"错误"*|*"无法"*)
-            echo -e "${RED}${message}${NC}" >&2 ;;
-        *"成功"*)
-            echo -e "${GREEN}${message}${NC}" >&2 ;;
-        *"忽略"*|*"跳过"*|*"警告"*|*"默认"*)
-            echo -e "${YELLOW}${message}${NC}" >&2 ;;
-        *)
-            echo -e "${BLUE}${message}${NC}" >&2 ;;
+        *"失败"*|*"错误"*|*"无法"*) echo -e "${RED}${message}${NC}" >&2 ;;
+        *"成功"*) echo -e "${GREEN}${message}${NC}" >&2 ;;
+        *"忽略"*|*"跳过"*|*"警告"*|*"默认"*) echo -e "${YELLOW}${message}${NC}" >&2 ;;
+        *) echo -e "${BLUE}${message}${NC}" >&2 ;;
     esac
 }
 
 logo() {
-    echo -e "${MAGENTA}NapCat Installer (精简版)${NC}"
-    echo -e "${CYAN}安装目录: ${INSTALL_BASE_DIR}${NC}"
+    echo -e "${MAGENTA}NapCat Installer (Simplified)${NC}"
+    echo -e "${CYAN}Install Dir: ${INSTALL_BASE_DIR}${NC}"
     echo ""
 }
 
-need_cmd() {
-    if ! command -v "$1" >/dev/null 2>&1; then
-        return 1
-    fi
-    return 0
-}
+need_cmd() { command -v "$1" >/dev/null 2>&1; }
 
 prompt_timeout() {
-    # usage: prompt_timeout <seconds> <prompt> <default>
-    # 仅将选择结果输出到 stdout；提示与日志走 stderr
-    local seconds="$1"
-    local prompt="$2"
-    local default="$3"
-    local input=""
+    local seconds="$1" prompt="$2" default="$3" input=""
     if read -t "${seconds}" -r -p "${prompt}" input </dev/tty; then
         echo "" >&2
-        if [[ -z "${input}" ]]; then
-            printf '%s' "${default}"
-        else
-            printf '%s' "${input}"
-        fi
+        [[ -z "${input}" ]] && printf "%s" "${default}" || printf "%s" "${input}"
     else
-        echo "" >&2
-        log "超时未输入, 使用默认: ${default}"
-        printf '%s' "${default}"
+        echo "" >&2; log "Timeout, using default: ${default}"; printf "%s" "${default}"
     fi
 }
 
 detect_arch() {
-    local raw
-    raw="$(uname -m)"
+    local raw=$(uname -m)
     case "${raw}" in
         x86_64|amd64) SYSTEM_ARCH="amd64" ;;
         aarch64|arm64) SYSTEM_ARCH="arm64" ;;
         loongarch64) SYSTEM_ARCH="loongarch64" ;;
         mips64el|mips64) SYSTEM_ARCH="mips64el" ;;
-        *)
-            log "错误: 不支持的系统架构: ${raw}"
-            exit 1
-            ;;
+        *) log "Unsupported arch: ${raw}"; exit 1 ;;
     esac
-    log "检测到 CPU 架构: ${raw} -> ${SYSTEM_ARCH}"
+    log "Arch: ${raw} -> ${SYSTEM_ARCH}"
 }
 
 detect_distro() {
     if [[ -f /etc/os-release ]]; then
-        # shellcheck disable=SC1091
         . /etc/os-release
         DISTRO_ID="${ID:-unknown}"
-        log "检测到系统: ${NAME:-$DISTRO_ID} (${VERSION_ID:-unknown})"
-    else
-        DISTRO_ID="unknown"
-        log "警告: 无法读取 /etc/os-release"
+        log "Distro: ${NAME:-$DISTRO_ID} (${VERSION_ID:-unknown})"
+    else DISTRO_ID="unknown"; fi
+    if need_cmd apt-get || need_cmd dpkg; then PACKAGE_MANAGER="apt"; PACKAGE_FORMAT="deb"
+    elif need_cmd dnf || need_cmd yum || need_cmd rpm; then PACKAGE_MANAGER="dnf"; PACKAGE_FORMAT="rpm"
+    else PACKAGE_MANAGER="unknown"; PACKAGE_FORMAT="deb"; fi
+    log "Package format: ${PACKAGE_FORMAT} (${PACKAGE_MANAGER})"
+}
+
+check_local_qq_package() {
+    local dir="${1:-$(manual_pkg_dir)}"
+    local fmt="${PACKAGE_FORMAT}"
+
+    if [[ -f "${dir}/QQ.${fmt}" ]]; then
+        local size=$(stat -c%s "${dir}/QQ.${fmt}" 2>/dev/null || stat -f%z "${dir}/QQ.${fmt}" 2>/dev/null || echo 0)
+        if (( size > QQ_MIN_SIZE )); then
+            MANUAL_QQ_PKG="${dir}/QQ.${fmt}"
+            return 0
+        fi
     fi
 
-    if need_cmd apt-get || need_cmd dpkg; then
-        PACKAGE_MANAGER="apt"
-        PACKAGE_FORMAT="deb"
-    elif need_cmd dnf || need_cmd yum || need_cmd rpm; then
-        PACKAGE_MANAGER="dnf"
-        PACKAGE_FORMAT="rpm"
-    else
-        PACKAGE_MANAGER="unknown"
-        PACKAGE_FORMAT="deb"
-        log "警告: 未能识别包管理器, 默认按 deb 处理"
+    local found=$(ls -1 "${dir}"/QQ_*.${fmt} 2>/dev/null | head -n1 || true)
+    if [[ -n "${found}" && -f "${found}" ]]; then
+        local size=$(stat -c%s "${found}" 2>/dev/null || stat -f%z "${found}" 2>/dev/null || echo 0)
+        if (( size > QQ_MIN_SIZE )); then
+            MANUAL_QQ_PKG="${found}"
+            return 0
+        fi
     fi
-    log "包格式默认: ${PACKAGE_FORMAT} (包管理: ${PACKAGE_MANAGER})"
+
+    return 1
 }
 
-choose_package_format() {
-    echo ""
-    log "系统/包格式选择 (10 秒后默认: 识别结果 ${PACKAGE_FORMAT})"
-    echo -e "  ${GREEN}1${NC}) 自动 (${PACKAGE_FORMAT}) [默认]"
-    echo -e "  ${CYAN}2${NC}) Ubuntu/Debian (.deb)"
-    echo -e "  ${CYAN}3${NC}) Fedora/RHEL/CentOS (.rpm)"
-    local choice
-    choice="$(prompt_timeout 10 "请输入序号 [1]: " "1")"
-    case "${choice}" in
-        2|deb|DEB|ubuntu|debian|Ubuntu|Debian)
-            PACKAGE_FORMAT="deb"
-            PACKAGE_MANAGER="apt"
-            ;;
-        3|rpm|RPM|fedora|centos|rhel|Fedora|CentOS)
-            PACKAGE_FORMAT="rpm"
-            PACKAGE_MANAGER="dnf"
-            ;;
-        1|""|*)
-            log "使用识别结果: ${PACKAGE_FORMAT}"
-            ;;
-    esac
-    log "最终包格式: ${PACKAGE_FORMAT}"
+check_local_napcat_package() {
+    local dir="${1:-$(manual_pkg_dir)}"
+
+    if [[ -f "${dir}/NapCat.Shell.zip" ]]; then
+        local size=$(stat -c%s "${dir}/NapCat.Shell.zip" 2>/dev/null || stat -f%z "${dir}/NapCat.Shell.zip" 2>/dev/null || echo 0)
+        if (( size > NAPCAT_MIN_SIZE )); then
+            MANUAL_NAPCAT_ZIP="${dir}/NapCat.Shell.zip"
+            return 0
+        fi
+    fi
+
+    return 1
 }
 
-choose_package_mode() {
-    echo ""
-    log "资源获取方式 (10 秒后默认: 直连下载)"
-    echo -e "  ${GREEN}1${NC}) 直连下载 [默认]"
-    echo -e "  ${CYAN}2${NC}) 手动导入安装包"
-    local choice
-    choice="$(prompt_timeout 10 "请输入序号 [1]: " "1")"
-    case "${choice}" in
-        2|manual|MANUAL|m|M)
-            PACKAGE_MODE="manual"
-            log "已选择: 手动导入"
-            ;;
-        *)
-            PACKAGE_MODE="direct"
-            log "已选择: 直连下载"
-            ;;
-    esac
-}
-
-# 手动导入目录: 仓库 packages/ 优先, 否则当前目录 packages/
 manual_pkg_dir() {
-    if [[ -n "${MANUAL_PKG_DIR}" ]]; then
-        echo "${MANUAL_PKG_DIR}"
-        return
-    fi
+    if [[ -n "${MANUAL_PKG_DIR}" ]]; then echo "${MANUAL_PKG_DIR}"; return; fi
     if [[ -d "${SCRIPT_DIR}/packages" ]] || [[ -f "${SCRIPT_DIR}/install.sh" ]]; then
         echo "${SCRIPT_DIR}/packages"
     else
@@ -197,812 +154,351 @@ manual_pkg_dir() {
 }
 
 print_manual_import_guide() {
-    local dir
-    dir="$(manual_pkg_dir)"
+    local dir=$(manual_pkg_dir)
     mkdir -p "${dir}"
-
     echo ""
-    log "======== 手动导入说明 ========"
-    log "请将下列文件放到目录:"
+    log "======== Manual Import Guide ========"
+    log "Place files in:"
     echo -e "  ${CYAN}${dir}${NC}"
     echo ""
-    log "必需文件:"
-    echo -e "  1) ${GREEN}NapCat.Shell.zip${NC}"
-    echo -e "     格式: zip"
-    echo -e "     文件名: NapCat.Shell.zip  (固定)"
-    echo -e "     路径: ${dir}/NapCat.Shell.zip"
-    echo -e "     来源示例: https://github.com/NapNeko/NapCatQQ/releases/latest/download/NapCat.Shell.zip"
+    log "Required:"
+    echo -e "  1) ${GREEN}NapCat.Shell.zip${NC}  (zip, >20MB)"
+    echo -e "     Source: https://github.com/NapNeko/NapCatQQ/releases/latest/download/NapCat.Shell.zip"
     echo ""
-    echo -e "  2) ${GREEN}LinuxQQ 安装包${NC}"
-    echo -e "     格式: .deb 或 .rpm (与当前选择的包格式一致: ${PACKAGE_FORMAT})"
-    echo -e "     架构: ${SYSTEM_ARCH}"
-    if [[ "${PACKAGE_FORMAT}" == "deb" ]]; then
-        if [[ "${SYSTEM_ARCH}" == "amd64" ]]; then
-            echo -e "     推荐文件名: QQ_*.deb  (如 QQ_3.2.29_260528_amd64_01.deb)"
-        elif [[ "${SYSTEM_ARCH}" == "arm64" ]]; then
-            echo -e "     推荐文件名: QQ_*_arm64_*.deb"
-        else
-            echo -e "     推荐文件名: QQ_*_${SYSTEM_ARCH}_*.deb"
-        fi
-    else
-        if [[ "${SYSTEM_ARCH}" == "amd64" ]]; then
-            echo -e "     推荐文件名: QQ_*_x86_64_*.rpm"
-        elif [[ "${SYSTEM_ARCH}" == "arm64" ]]; then
-            echo -e "     推荐文件名: QQ_*_aarch64_*.rpm"
-        else
-            echo -e "     推荐文件名: QQ_*_${SYSTEM_ARCH}_*.rpm"
-        fi
-    fi
-    echo -e "     路径: 放到 ${dir}/ 下任意一个匹配的 .${PACKAGE_FORMAT} 文件即可"
-    echo -e "     来源示例: https://rodert.github.io/qq-versions/ 或官方 QQ 下载页"
+    echo -e "  2) ${GREEN}LinuxQQ package${NC}  (.${PACKAGE_FORMAT}, >100MB)"
+    echo -e "     Filename: QQ*.${PACKAGE_FORMAT}"
+    echo -e "     Arch: ${SYSTEM_ARCH}"
+    echo -e "     Source: https://rodert.github.io/qq-versions/"
     echo ""
-    log "可选文件:"
-    echo -e "  - NapCat.Shell.zip.sha256   (校验, 可选)"
-    echo -e "  - 固定别名: ${dir}/QQ.${PACKAGE_FORMAT}  (也可)"
+    log "Optional:"
+    echo -e "  - NapCat.Shell.zip.sha256 (verify)"
     echo ""
-    log "准备就绪后执行 (在本终端继续):"
-    echo -e "  ${CYAN}直接回车${NC}  -> 脚本检测文件并继续安装"
-    echo ""
-    log "或新开终端先拷贝再回来回车, 示例:"
-    echo -e "  ${CYAN}mkdir -p ${dir}${NC}"
-    echo -e "  ${CYAN}# 用 scp/sftp/面板上传 NapCat.Shell.zip 与 QQ.${PACKAGE_FORMAT}${NC}"
-    echo -e "  ${CYAN}# scp NapCat.Shell.zip QQ.${PACKAGE_FORMAT} user@host:${dir}/${NC}"
-    echo -e "  ${CYAN}ls -lah ${dir}${NC}"
+    log "After placing files, press Enter to continue"
+    echo -e "  ${CYAN}Enter -> detect files and install${NC}"
     log "=============================="
 }
 
 wait_manual_packages() {
-    local dir
-    dir="$(manual_pkg_dir)"
+    local dir=$(manual_pkg_dir)
     MANUAL_PKG_DIR="${dir}"
     mkdir -p "${dir}"
     print_manual_import_guide
+    echo ""
+    read -r -p "Press Enter when ready (q to quit): " ans </dev/tty || true
+    if [[ "${ans}" =~ ^[Qq]$ ]]; then log "Cancelled"; exit 0; fi
 
-    while true; do
-        echo ""
-        read -r -p "文件已放好后按回车继续 (输入 q 退出): " ans </dev/tty || true
-        if [[ "${ans}" =~ ^[Qq]$ ]]; then
-            log "用户取消"
-            exit 0
-        fi
+    local qq_ok="n" napcat_ok="n"
 
-        local napcat_ok="n" qq_ok="n" qq_file=""
-        if [[ -s "${dir}/NapCat.Shell.zip" ]]; then
-            if unzip -t "${dir}/NapCat.Shell.zip" >/dev/null 2>&1; then
-                napcat_ok="y"
-                log "已找到 NapCat.Shell.zip ($(du -h "${dir}/NapCat.Shell.zip" | awk '{print $1}'))"
-            else
-                log "错误: ${dir}/NapCat.Shell.zip 不是有效 zip"
-            fi
-        else
-            log "缺少: ${dir}/NapCat.Shell.zip"
-        fi
+    if check_local_qq_package "${dir}"; then
+        qq_ok="y"
+        log "Found QQ: ${MANUAL_QQ_PKG} ($(du -h "${MANUAL_QQ_PKG}" | awk '{print $1}'))"
+    else
+        log "Missing: QQ package (.${PACKAGE_FORMAT}, >100MB)"
+        log "Format: QQ_*.${PACKAGE_FORMAT} or QQ.${PACKAGE_FORMAT}"
+        log "Location: ${dir}/"
+    fi
 
-        # QQ package candidates
-        if [[ -s "${dir}/QQ.${PACKAGE_FORMAT}" ]]; then
-            qq_file="${dir}/QQ.${PACKAGE_FORMAT}"
-        else
-            # pick newest matching package
-            local found
-            found="$(ls -1t "${dir}"/*.${PACKAGE_FORMAT} 2>/dev/null | head -n1 || true)"
-            if [[ -n "${found}" && -s "${found}" ]]; then
-                qq_file="${found}"
-            fi
-        fi
-        if [[ -n "${qq_file}" ]]; then
-            qq_ok="y"
-            log "已找到 QQ 包: ${qq_file} ($(du -h "${qq_file}" | awk '{print $1}'))"
-        else
-            log "缺少: ${dir}/ 下的 .${PACKAGE_FORMAT} 安装包 (或 QQ.${PACKAGE_FORMAT})"
-        fi
+    if check_local_napcat_package "${dir}"; then
+        napcat_ok="y"
+        log "Found NapCat.Shell.zip ($(du -h "${MANUAL_NAPCAT_ZIP}" | awk '{print $1}'))"
+    else
+        log "Missing: NapCat.Shell.zip (>20MB)"
+        log "Format: NapCat.Shell.zip (fixed)"
+        log "Location: ${dir}/"
+    fi
 
-        if [[ "${napcat_ok}" == "y" && "${qq_ok}" == "y" ]]; then
-            MANUAL_QQ_PKG="${qq_file}"
-            MANUAL_NAPCAT_ZIP="${dir}/NapCat.Shell.zip"
-            log "手动导入文件检查通过, 继续安装"
-            return 0
-        fi
-        log "文件未齐全, 请补齐后再次回车"
-    done
+    if [[ "${qq_ok}" == "y" && "${napcat_ok}" == "y" ]]; then
+        log "Manual import check passed, continuing"
+        return 0
+    fi
+
+    echo ""
+    log "=============================="
+    log "Missing packages. Import to: ${dir}/"
+    log "Re-run manual mode after import"
+    log "=============================="
+    exit 1
 }
 
 download_file() {
-    local url="$1"
-    local dest="$2"
-    log "下载: ${url}"
-    log "保存到: ${dest}"
+    local url="$1" dest="$2"
+    log "Download: ${url}"
+    log "Save to: ${dest}"
     rm -f "${dest}"
     if ! curl -k -L --connect-timeout 20 --max-time 600 --retry 3 --retry-delay 2 -# "${url}" -o "${dest}"; then
-        log "错误: 下载失败: ${url}"
+        log "Error: download failed: ${url}"
         return 1
     fi
-    if [[ ! -s "${dest}" ]]; then
-        log "错误: 下载文件为空: ${dest}"
-        return 1
-    fi
-    log "下载成功: ${dest} ($(du -h "${dest}" | awk '{print $1}'))"
+    if [[ ! -s "${dest}" ]]; then log "Error: empty file"; return 1; fi
+    log "Downloaded: ${dest} ($(du -h "${dest}" | awk '{print $1}'))"
 }
 
-# 预检下载链接是否可达 (拉前 2KB, 仅直连)
 url_reachable() {
     local url="$1"
     local code size
     read -r code size < <(curl -k -s -o /dev/null -w "%{http_code} %{size_download}" -L --connect-timeout 12 --max-time 25 -A "Mozilla/5.0" -r 0-2047 "${url}" || echo "000 0")
-    if [[ "${code}" =~ ^[0-9]+$ && "${code}" -lt 400 && "${size}" -gt 0 ]]; then
-        return 0
-    fi
-    log "链接不可用: HTTP ${code}, bytes=${size}, url=${url}"
+    if [[ "${code}" =~ ^[0-9]+$ && "${code}" -lt 400 && "${size}" -gt 0 ]]; then return 0; fi
+    log "Unreachable: HTTP ${code}, bytes=${size}, url=${url}"
     return 1
 }
 
 ensure_deps() {
     local missing=()
-    for c in curl unzip jq; do
-        need_cmd "$c" || missing+=("$c")
-    done
-    if [[ "${PACKAGE_FORMAT}" == "deb" ]]; then
-        need_cmd dpkg || missing+=("dpkg")
-    else
-        need_cmd rpm2cpio || missing+=("rpm2cpio")
-        need_cmd cpio || missing+=("cpio")
-    fi
-    need_cmd xvfb-run || true
-    need_cmd screen || true
-
-    if [[ ${#missing[@]} -eq 0 ]]; then
-        log "依赖检查通过"
-        return 0
-    fi
-
-    log "缺少依赖: ${missing[*]}"
-    if [[ "$(id -u)" -eq 0 ]]; then
-        SUDO=""
-    elif need_cmd sudo; then
-        SUDO="sudo"
-    else
-        log "错误: 缺少 sudo, 请手动安装: ${missing[*]}"
-        exit 1
-    fi
-
+    for c in curl unzip jq; do need_cmd "$c" || missing+=("$c"); done
+    if [[ "${PACKAGE_FORMAT}" == "deb" ]]; then need_cmd dpkg || missing+=("dpkg")
+    else need_cmd rpm2cpio || missing+=("rpm2cpio"); need_cmd cpio || missing+=("cpio"); fi
+    need_cmd xvfb-run || true; need_cmd screen || true
+    if [[ ${#missing[@]} -eq 0 ]]; then log "Deps OK"; return 0; fi
+    log "Missing deps: ${missing[*]}"
+    local SUDO=""
+    if [[ "$(id -u)" -ne 0 ]]; then need_cmd sudo && SUDO="sudo" || { log "Need sudo"; exit 1; }; fi
     if [[ "${PACKAGE_MANAGER}" == "apt" ]] || need_cmd apt-get; then
         ${SUDO} apt-get update -y -qq
-        ${SUDO} apt-get install -y -qq curl unzip jq dpkg xvfb xauth screen dialog screen dialog flatpak 2>/dev/null || \
-        ${SUDO} apt-get install -y -qq curl unzip jq dpkg xvfb xauth screen dialog screen dialog
+        ${SUDO} apt-get install -y -qq curl unzip jq dpkg xvfb xauth screen dialog 2>/dev/null || ${SUDO} apt-get install -y -qq curl unzip jq dpkg xvfb xauth screen dialog
     elif need_cmd dnf; then
-        ${SUDO} dnf install -y curl unzip jq cpio rpm xvfb-run xorg-x11-server-Xvfb screen || \
-        ${SUDO} dnf install -y curl unzip jq cpio rpm screen || \
-        ${SUDO} dnf install -y curl unzip jq cpio rpm
+        ${SUDO} dnf install -y curl unzip jq cpio rpm xvfb-run screen || ${SUDO} dnf install -y curl unzip jq cpio rpm
     elif need_cmd yum; then
         ${SUDO} yum install -y curl unzip jq cpio rpm screen || ${SUDO} yum install -y curl unzip jq cpio rpm
-    else
-        log "错误: 无法自动安装依赖, 请手动安装: ${missing[*]}"
-        exit 1
-    fi
-    log "依赖安装完成"
-}
-
-load_qq_versions() {
-    mkdir -p "${WORKDIR}"
-    local local_copy="${WORKDIR}/qq_versions.json"
-
-    if [[ -f "${QQ_VERSIONS_FILE}" ]]; then
-        cp -f "${QQ_VERSIONS_FILE}" "${local_copy}"
-        log "已加载本地版本列表: ${QQ_VERSIONS_FILE}"
-    else
-        log "本地版本列表不存在, 尝试在线获取..."
-        local ok=0
-        for remote in "${QQ_VERSIONS_REMOTE_CANDIDATES[@]}"; do
-            if download_file "${remote}" "${local_copy}"; then
-                ok=1
-                break
-            fi
-        done
-        if [[ ${ok} -ne 1 ]]; then
-            log "错误: 无法获取 QQ 版本列表"
-            exit 1
-        fi
-    fi
-
-    if ! jq -e '.packages | type=="array"' "${local_copy}" >/dev/null 2>&1; then
-        log "错误: 版本列表格式无效"
-        exit 1
-    fi
-    QQ_VERSIONS_FILE="${local_copy}"
-    log "版本列表同步时间: $(jq -r '.synced_at // "unknown"' "${QQ_VERSIONS_FILE}")"
-    log "版本条目数: $(jq -r '.count // (.packages|length)' "${QQ_VERSIONS_FILE}")"
-}
-
-choose_qq_version() {
-    load_qq_versions
-
-    # 使用 JSON 数组，避免 TSV 空字段错位；按版本聚合后取最新 15 个
-    local list_file="${WORKDIR}/qq_choices.json"
-    jq --arg arch "${SYSTEM_ARCH}" --arg fmt "${PACKAGE_FORMAT}" '
-        [.packages[]
-         | select(.arch==$arch and .format==$fmt)
-         | select(.available != false)
-        ]
-        | group_by(.version)
-        | map(sort_by(.update_time) | reverse | .[0])
-        | sort_by(.update_time) | reverse
-        | .[0:15]
-    ' "${QQ_VERSIONS_FILE}" > "${list_file}"
-
-    local count
-    count="$(jq 'length' "${list_file}")"
-    if [[ "${count}" -eq 0 ]]; then
-        log "错误: 在版本列表中未找到 ${SYSTEM_ARCH}/${PACKAGE_FORMAT} 的 QQ 包"
-        log "提示: 可尝试切换系统架构/包格式选项"
-        exit 1
-    fi
-
-    echo ""
-    log "可选 QQ 版本 (显示最新 ${count} 个, 架构=${SYSTEM_ARCH}, 格式=${PACKAGE_FORMAT})"
-    printf "%-4s %-12s %-12s %-10s %-6s %s\n" "序号" "版本" "更新日期" "架构" "格式" "文件名"
-    echo "----------------------------------------------------------------"
-    local i ver date arch fmt fname
-    for ((i=0; i<count; i++)); do
-        ver="$(jq -r --argjson i "$i" '.[$i].version' "${list_file}")"
-        date="$(jq -r --argjson i "$i" '.[$i].update_date // .[$i].update_time[0:10]' "${list_file}")"
-        arch="$(jq -r --argjson i "$i" '.[$i].arch' "${list_file}")"
-        fmt="$(jq -r --argjson i "$i" '.[$i].format' "${list_file}")"
-        fname="$(jq -r --argjson i "$i" '.[$i].filename' "${list_file}")"
-        printf "%-4s %-12s %-12s %-10s %-6s %s\n" "$((i+1))" "${ver}" "${date}" "${arch}" "${fmt}" "${fname}"
-    done
-    echo "----------------------------------------------------------------"
-    echo -e "直接回车 = 最新版 (序号 1); 或输入序号 1-${count}"
-
-    local choice
-    choice="$(prompt_timeout 10 "请选择 QQ 版本序号 [1]: " "1")"
-    if ! [[ "${choice}" =~ ^[0-9]+$ ]] || [[ "${choice}" -lt 1 || "${choice}" -gt ${count} ]]; then
-        log "警告: 无效序号 '${choice}', 使用默认最新版"
-        choice="1"
-    fi
-
-    local idx=$((choice-1))
-    SELECTED_QQ_VERSION="$(jq -r --argjson i "$idx" '.[$i].version' "${list_file}")"
-    SELECTED_QQ_URL="$(jq -r --argjson i "$idx" '.[$i].url' "${list_file}")"
-    SELECTED_QQ_SHA256="$(jq -r --argjson i "$idx" '.[$i].sha256 // empty' "${list_file}")"
-    SELECTED_QQ_MD5="$(jq -r --argjson i "$idx" '.[$i].md5 // empty' "${list_file}")"
-    SELECTED_QQ_FILENAME="$(jq -r --argjson i "$idx" '.[$i].filename' "${list_file}")"
-    date="$(jq -r --argjson i "$idx" '.[$i].update_date // .[$i].update_time[0:10]' "${list_file}")"
-    arch="$(jq -r --argjson i "$idx" '.[$i].arch' "${list_file}")"
-    fmt="$(jq -r --argjson i "$idx" '.[$i].format' "${list_file}")"
-
-    log "已选择 QQ: 版本=${SELECTED_QQ_VERSION}, 架构=${arch}, 格式=${fmt}"
-    log "更新时间: ${date}"
-    log "下载链接: ${SELECTED_QQ_URL}"
-    [[ -n "${SELECTED_QQ_SHA256}" ]] && log "SHA256: ${SELECTED_QQ_SHA256}"
-    [[ -n "${SELECTED_QQ_MD5}" ]] && log "MD5: ${SELECTED_QQ_MD5}"
-
-    if [[ "${PACKAGE_MODE}" == "manual" ]]; then
-        log "手动模式: 跳过在线 QQ 链接校验, 将使用本地导入包"
-        log "列表参考版本: ${SELECTED_QQ_VERSION} (${arch}/${fmt})"
-    else
-        # 安装前校验链接；失效则在同版本/架构/格式中寻找可用替代
-        resolve_qq_download_url "${SELECTED_QQ_VERSION}" "${arch}" "${fmt}"
-        log "最终下载链接: ${SELECTED_QQ_URL}"
-    fi
-    log "安装位置: ${INSTALL_BASE_DIR}"
-    log "QQ 路径: ${QQ_BASE_PATH}"
-    log "NapCat 路径: ${NAPCAT_DIR}"
-}
-
-# 校验并在失效时回退到同版本可用源 / 次新版本
-resolve_qq_download_url() {
-    local want_ver="$1"
-    local want_arch="$2"
-    local want_fmt="$3"
-
-    if url_reachable "${SELECTED_QQ_URL}"; then
-        log "下载链接预检通过"
-        return 0
-    fi
-
-    log "警告: 所选链接失效, 尝试寻找替代源..."
-    local alt_file="${WORKDIR}/qq_alt.json"
-    jq --arg ver "${want_ver}" --arg arch "${want_arch}" --arg fmt "${want_fmt}" '
-        [.packages[]
-         | select(.arch==$arch and .format==$fmt)
-         | select((.available != false))
-        ]
-        | sort_by(.update_time) | reverse
-    ' "${QQ_VERSIONS_FILE}" > "${alt_file}"
-
-    local n i ver url sha md5 fname date
-    n="$(jq 'length' "${alt_file}")"
-    for ((i=0; i<n; i++)); do
-        ver="$(jq -r --argjson i "$i" '.[$i].version' "${alt_file}")"
-        url="$(jq -r --argjson i "$i" '.[$i].url' "${alt_file}")"
-        # 先同版本，再其他较新版本
-        if [[ "${ver}" != "${want_ver}" && ${i} -eq 0 ]]; then
-            :
-        fi
-        log "尝试替代: version=${ver} url=${url}"
-        if url_reachable "${url}"; then
-            SELECTED_QQ_VERSION="${ver}"
-            SELECTED_QQ_URL="${url}"
-            SELECTED_QQ_SHA256="$(jq -r --argjson i "$i" '.[$i].sha256 // empty' "${alt_file}")"
-            SELECTED_QQ_MD5="$(jq -r --argjson i "$i" '.[$i].md5 // empty' "${alt_file}")"
-            SELECTED_QQ_FILENAME="$(jq -r --argjson i "$i" '.[$i].filename' "${alt_file}")"
-            date="$(jq -r --argjson i "$i" '.[$i].update_date // .[$i].update_time[0:10]' "${alt_file}")"
-            log "已切换到可用源: 版本=${SELECTED_QQ_VERSION}, 更新=${date}"
-            log "文件名: ${SELECTED_QQ_FILENAME}"
-            return 0
-        fi
-    done
-
-    log "错误: 未找到可用的 QQ 下载链接 (${want_arch}/${want_fmt})"
-    log "可稍后重试, 或手动更新 data/qq_versions.json"
-    exit 1
-}
-
-
-check_existing_install() {
-    if [[ ! -d "${INSTALL_BASE_DIR}" && ! -d "${NAPCAT_DIR}" ]]; then
-        return 0
-    fi
-
-    echo ""
-    log "检测到已有安装目录"
-    [[ -d "${INSTALL_BASE_DIR}" ]] && log "  存在: ${INSTALL_BASE_DIR}"
-    [[ -d "${NAPCAT_DIR}" ]] && log "  存在: ${NAPCAT_DIR}"
-    if [[ -f "${QQ_PACKAGE_JSON_PATH}" ]] && need_cmd jq; then
-        local cur
-        cur="$(jq -r '.version // empty' "${QQ_PACKAGE_JSON_PATH}" 2>/dev/null || true)"
-        [[ -n "${cur}" ]] && log "  当前 QQ 版本: ${cur}"
-    fi
-
-    echo -e "  ${YELLOW}1${NC}) 覆盖安装 (删除后重装) [默认]"
-    echo -e "  ${CYAN}2${NC}) 退出"
-    local choice
-    choice="$(prompt_timeout 10 "请选择 [1]: " "1")"
-    case "${choice}" in
-        2|q|Q|n|N|exit)
-            log "用户选择退出"
-            exit 0
-            ;;
-        *)
-            FORCE_OVERWRITE="y"
-            log "将覆盖安装"
-            ;;
-    esac
+    else log "Cannot auto-install: ${missing[*]}"; exit 1; fi
+    log "Deps installed"
 }
 
 install_linuxqq() {
     mkdir -p "${DOWNLOAD_DIR}"
-    if [[ "${PACKAGE_MODE}" == "manual" && -n "${MANUAL_QQ_PKG:-}" ]]; then
+    if [[ "${DOWNLOAD_MODE}" == "manual" && -n "${MANUAL_QQ_PKG:-}" ]]; then
         SELECTED_QQ_FILENAME="$(basename "${MANUAL_QQ_PKG}")"
     fi
     local pkg_path="${DOWNLOAD_DIR}/${SELECTED_QQ_FILENAME}"
-
-    log "开始获取 LinuxQQ 安装包..."
-    log "目标安装目录: ${INSTALL_BASE_DIR}"
-    if [[ "${PACKAGE_MODE}" == "manual" && -n "${MANUAL_QQ_PKG:-}" && -s "${MANUAL_QQ_PKG}" ]]; then
-        log "使用手动导入的 QQ 包: ${MANUAL_QQ_PKG}"
+    log "Getting LinuxQQ package..."
+    if [[ "${DOWNLOAD_MODE}" == "manual" && -n "${MANUAL_QQ_PKG:-}" && -s "${MANUAL_QQ_PKG}" ]]; then
+        log "Using local: ${MANUAL_QQ_PKG}"
         cp -f "${MANUAL_QQ_PKG}" "${pkg_path}"
-        log "已复制到: ${pkg_path} ($(du -h "${pkg_path}" | awk '{print $1}'))"
     else
-        log "直连下载: ${SELECTED_QQ_URL}"
+        log "Downloading: ${SELECTED_QQ_URL}"
         if ! download_file "${SELECTED_QQ_URL}" "${pkg_path}"; then
-            log "错误: QQ 下载失败"
-            log "可改用手动导入: 将 .${PACKAGE_FORMAT} 包放到 $(manual_pkg_dir)/ 后重新运行"
-            exit 1
+            log "Error: download failed"; exit 1
         fi
     fi
-
     if [[ -n "${SELECTED_QQ_SHA256}" ]] && need_cmd sha256sum; then
-        local actual
-        actual="$(sha256sum "${pkg_path}" | awk '{print $1}')"
-        if [[ "${actual}" != "${SELECTED_QQ_SHA256}" ]]; then
-            log "错误: SHA256 校验失败"
-            log "期望: ${SELECTED_QQ_SHA256}"
-            log "实际: ${actual}"
-            exit 1
-        fi
-        log "SHA256 校验成功"
-    elif [[ -n "${SELECTED_QQ_MD5}" ]] && need_cmd md5sum; then
-        local actual
-        actual="$(md5sum "${pkg_path}" | awk '{print $1}')"
-        if [[ "${actual}" != "${SELECTED_QQ_MD5}" ]]; then
-            log "错误: MD5 校验失败"
-            log "期望: ${SELECTED_QQ_MD5}"
-            log "实际: ${actual}"
-            exit 1
-        fi
-        log "MD5 校验成功"
-    else
-        log "警告: 无校验和或缺少校验工具, 跳过完整性校验"
+        local actual=$(sha256sum "${pkg_path}" | awk '{print $1}')
+        if [[ "${actual}" != "${SELECTED_QQ_SHA256}" ]]; then log "Error: SHA256 mismatch"; exit 1; fi
+        log "SHA256 OK"
     fi
-
     if [[ "${FORCE_OVERWRITE}" == "y" && -d "${INSTALL_BASE_DIR}" ]]; then
         local backup_cfg=""
         if [[ -d "${NAPCAT_DIR}/config" ]]; then
             backup_cfg="${WORKDIR}/napcat_config_backup"
             mkdir -p "${backup_cfg}"
             cp -a "${NAPCAT_DIR}/config/." "${backup_cfg}/" || true
-            log "已备份 NapCat 配置到: ${backup_cfg}"
         fi
-        log "删除旧安装: ${INSTALL_BASE_DIR}"
         rm -rf "${INSTALL_BASE_DIR}"
-        # restore later after napcat install via env
-        if [[ -n "${backup_cfg}" && -d "${backup_cfg}" ]]; then
-            export NAPCAT_CONFIG_BACKUP="${backup_cfg}"
-        fi
+        [[ -n "${backup_cfg}" ]] && export NAPCAT_CONFIG_BACKUP="${backup_cfg}"
     fi
-
     mkdir -p "${INSTALL_BASE_DIR}"
-    log "解压 QQ 到: ${INSTALL_BASE_DIR}"
-    if [[ "${PACKAGE_FORMAT}" == "deb" ]]; then
-        dpkg -x "${pkg_path}" "${INSTALL_BASE_DIR}"
-    else
-        rpm2cpio "${pkg_path}" | (cd "${INSTALL_BASE_DIR}" && cpio -idm)
-    fi
-
-    if [[ ! -x "${QQ_EXECUTABLE}" && -f "${QQ_EXECUTABLE}" ]]; then
-        chmod +x "${QQ_EXECUTABLE}" || true
-    fi
-    if [[ ! -f "${QQ_PACKAGE_JSON_PATH}" ]]; then
-        log "错误: QQ 解压后未找到 ${QQ_PACKAGE_JSON_PATH}"
-        exit 1
-    fi
-    log "LinuxQQ 安装成功"
-    log "QQ 可执行文件: ${QQ_EXECUTABLE}"
+    log "Extracting QQ..."
+    if [[ "${PACKAGE_FORMAT}" == "deb" ]]; then dpkg -x "${pkg_path}" "${INSTALL_BASE_DIR}"
+    else rpm2cpio "${pkg_path}" | (cd "${INSTALL_BASE_DIR}" && cpio -idm); fi
+    [[ ! -x "${QQ_EXECUTABLE}" && -f "${QQ_EXECUTABLE}" ]] && chmod +x "${QQ_EXECUTABLE}" || true
+    if [[ ! -f "${QQ_PACKAGE_JSON_PATH}" ]]; then log "Error: QQ extraction failed"; exit 1; fi
+    log "LinuxQQ installed"
 }
 
 download_and_install_napcat() {
     local zip_path="${DOWNLOAD_DIR}/NapCat.Shell.zip"
-    local local_zip=""
-    local cand expect actual
+    local local_zip="" cand
     local napcat_url="https://github.com/NapNeko/NapCatQQ/releases/latest/download/NapCat.Shell.zip"
-
-    # 手动导入优先
-    if [[ "${PACKAGE_MODE}" == "manual" && -n "${MANUAL_NAPCAT_ZIP:-}" && -s "${MANUAL_NAPCAT_ZIP}" ]]; then
+    if [[ "${DOWNLOAD_MODE}" == "manual" && -n "${MANUAL_NAPCAT_ZIP:-}" && -s "${MANUAL_NAPCAT_ZIP}" ]]; then
         local_zip="${MANUAL_NAPCAT_ZIP}"
     fi
-
-    # 其次仓库内置/当前目录
     if [[ -z "${local_zip}" ]]; then
-        for cand in             "${SCRIPT_DIR}/packages/NapCat.Shell.zip"             "${SCRIPT_DIR}/NapCat.Shell.zip"             "./packages/NapCat.Shell.zip"             "./NapCat.Shell.zip"
-        do
-            if [[ -f "${cand}" && -s "${cand}" ]]; then
-                local_zip="${cand}"
-                break
-            fi
+        for cand in "${SCRIPT_DIR}/packages/NapCat.Shell.zip" "${SCRIPT_DIR}/NapCat.Shell.zip" "./packages/NapCat.Shell.zip" "./NapCat.Shell.zip"; do
+            [[ -f "${cand}" && -s "${cand}" ]] && { local_zip="${cand}"; break; }
         done
     fi
-
     if [[ -n "${local_zip}" ]]; then
-        log "使用本地 NapCat 包: ${local_zip}"
-        log "文件大小: $(du -h "${local_zip}" | awk '{print $1}')"
+        log "Using local NapCat: ${local_zip}"
         if [[ -f "${local_zip}.sha256" ]]; then
-            expect="$(awk 'NR==1{print $1}' "${local_zip}.sha256")"
-            actual="$(sha256sum "${local_zip}" | awk '{print $1}')"
+            local expect=$(awk 'NR==1{print $1}' "${local_zip}.sha256")
+            local actual=$(sha256sum "${local_zip}" | awk '{print $1}')
             if [[ -n "${expect}" && "${expect}" != "${actual}" ]]; then
-                log "警告: 本地包 SHA256 不匹配"
-                log "期望: ${expect}"
-                log "实际: ${actual}"
-                if [[ "${PACKAGE_MODE}" == "manual" ]]; then
-                    log "错误: 手动导入的 NapCat 包校验失败"
-                    exit 1
-                fi
+                log "Warning: local SHA256 mismatch"
+                [[ "${DOWNLOAD_MODE}" == "manual" ]] && { log "Error: manual package corrupt"; exit 1; }
                 local_zip=""
-            elif [[ -n "${expect}" ]]; then
-                log "本地包 SHA256 校验通过"
             fi
         fi
     fi
-
     if [[ -n "${local_zip}" ]]; then
         cp -f "${local_zip}" "${zip_path}"
-        log "已复制本地包到下载目录: ${zip_path}"
     else
-        if [[ "${PACKAGE_MODE}" == "manual" ]]; then
-            log "错误: 手动模式未找到 NapCat.Shell.zip"
-            print_manual_import_guide
-            exit 1
+        if [[ "${DOWNLOAD_MODE}" == "manual" ]]; then log "Error: no NapCat.Shell.zip"; print_manual_import_guide; exit 1; fi
+        if [[ "${DOWNLOAD_MODE}" == "gitee" ]]; then
+            log "Gitee download NapCat..."
+            gitee_download_napcat "${zip_path}" || { log "Error: Gitee failed"; exit 1; }
+        else
+            log "Direct download NapCat..."
+            download_file "${napcat_url}" "${zip_path}" || { log "Error: download failed"; exit 1; }
         fi
-        log "直连下载 NapCat.Shell.zip ..."
-        log "下载链接: ${napcat_url}"
-        if ! download_file "${napcat_url}" "${zip_path}"; then
-            log "错误: NapCat 下载失败"
-            log "可改用手动导入: 将 NapCat.Shell.zip 放到 $(manual_pkg_dir)/ 后重新运行"
-            exit 1
-        fi
-        if ! unzip -t "${zip_path}" >/dev/null 2>&1; then
-            log "错误: 下载的 NapCat 包无效"
-            exit 1
-        fi
+        unzip -t "${zip_path}" >/dev/null 2>&1 || { log "Error: invalid zip"; exit 1; }
     fi
-
     local extract_dir="${WORKDIR}/NapCatExtract"
-    rm -rf "${extract_dir}"
-    mkdir -p "${extract_dir}"
-    log "解压 NapCat 到: ${extract_dir}"
+    rm -rf "${extract_dir}"; mkdir -p "${extract_dir}"
     unzip -q -o "${zip_path}" -d "${extract_dir}"
-
-    # 兼容 zip 内是否多一层目录
     local src_dir="${extract_dir}"
-    if [[ -d "${extract_dir}/NapCat" ]]; then
-        src_dir="${extract_dir}/NapCat"
-    elif [[ -f "${extract_dir}/napcat.mjs" ]]; then
-        src_dir="${extract_dir}"
-    else
-        # 取第一个包含 napcat.mjs 的目录
-        local found
-        found="$(find "${extract_dir}" -type f -name 'napcat.mjs' | head -n1 || true)"
-        if [[ -n "${found}" ]]; then
-            src_dir="$(dirname "${found}")"
-        fi
-    fi
-
+    [[ -d "${extract_dir}/NapCat" ]] && src_dir="${extract_dir}/NapCat"
+    [[ -f "${extract_dir}/napcat.mjs" ]] && src_dir="${extract_dir}"
     mkdir -p "${NAPCAT_DIR}"
-    log "安装 NapCat 到: ${NAPCAT_DIR}"
     cp -a "${src_dir}/." "${NAPCAT_DIR}/"
     chmod -R +x "${NAPCAT_DIR}" || true
-
     if [[ -n "${NAPCAT_CONFIG_BACKUP:-}" && -d "${NAPCAT_CONFIG_BACKUP}" ]]; then
-        mkdir -p "${NAPCAT_DIR}/config"
-        cp -a "${NAPCAT_CONFIG_BACKUP}/." "${NAPCAT_DIR}/config/" || true
-        log "已恢复 NapCat 配置"
+        mkdir -p "${NAPCAT_DIR}/config"; cp -a "${NAPCAT_CONFIG_BACKUP}/." "${NAPCAT_DIR}/config/" || true
+        log "Restored NapCat config"
     fi
-
     local loader="${QQ_BASE_PATH}/resources/app/loadNapCat.js"
-    log "写入启动注入: ${loader}"
     echo "(async () => {await import('file:///${NAPCAT_DIR}/napcat.mjs');})();" > "${loader}"
-
-    log "修改 QQ package.json main 入口"
-    local tmp_pkg="${WORKDIR}/package.json.tmp"
-    jq '.main = "./loadNapCat.js"' "${QQ_PACKAGE_JSON_PATH}" > "${tmp_pkg}"
-    mv "${tmp_pkg}" "${QQ_PACKAGE_JSON_PATH}"
-    log "NapCat 安装成功"
+    jq '.main = "./loadNapCat.js"' "${QQ_PACKAGE_JSON_PATH}" > "${WORKDIR}/pkg.tmp"
+    mv "${WORKDIR}/pkg.tmp" "${QQ_PACKAGE_JSON_PATH}"
+    log "NapCat installed"
 }
 
 install_napcat_tui_cli() {
-    # 安装官方 NapCat-TUI-CLI (dialog 终端 UI)
-    # 来源: https://github.com/NapNeko/NapCat-TUI-CLI
     echo ""
-    log "是否安装官方 NapCat TUI-CLI? (输入 napcat 进入终端管理界面)"
-    log "默认安装 [Y], 10 秒后自动确认"
-    local choice
-    choice="$(prompt_timeout 10 "安装 TUI-CLI? [Y/n]: " "Y")"
-    if [[ "${choice}" =~ ^[Nn]$ ]]; then
-        log "已跳过 TUI-CLI 安装, 将创建简易启动命令"
-        install_napcat_simple_command
-        return 0
-    fi
-
-    # 依赖: dialog (TUI 必需), ffmpeg (推荐)
+    log "Install official NapCat TUI-CLI?"
+    local choice=$(prompt_timeout 10 "Install TUI-CLI? [Y/n]: " "Y")
+    [[ "${choice}" =~ ^[Nn]$ ]] && { install_napcat_simple_command; return 0; }
     local missing=()
     need_cmd dialog || missing+=("dialog")
     need_cmd ffmpeg || missing+=("ffmpeg")
     if [[ ${#missing[@]} -gt 0 ]]; then
-        log "安装 TUI 依赖: ${missing[*]}"
-        if [[ "$(id -u)" -eq 0 ]]; then
-            SUDO=""
-        elif need_cmd sudo; then
-            SUDO="sudo"
-        else
-            log "警告: 无法自动安装依赖 ${missing[*]}, 请手动安装后重试 TUI"
-            install_napcat_simple_command
-            return 1
-        fi
-        if need_cmd apt-get; then
-            ${SUDO} apt-get update -y -qq || true
-            ${SUDO} apt-get install -y -qq "${missing[@]}" || true
-        elif need_cmd dnf; then
-            ${SUDO} dnf install -y "${missing[@]}" || true
-        elif need_cmd yum; then
-            ${SUDO} yum install -y "${missing[@]}" || true
-        fi
+        local SUDO=""
+        [[ "$(id -u)" -ne 0 ]] && need_cmd sudo && SUDO="sudo" || true
+        if need_cmd apt-get; then ${SUDO} apt-get update -y -qq || true; ${SUDO} apt-get install -y -qq "${missing[@]}" || true
+        elif need_cmd dnf; then ${SUDO} dnf install -y "${missing[@]}" || true
+        elif need_cmd yum; then ${SUDO} yum install -y "${missing[@]}" || true; fi
     fi
-    if ! need_cmd dialog; then
-        log "错误: dialog 未安装, 无法使用官方 TUI, 回退简易命令"
-        install_napcat_simple_command
-        return 1
-    fi
-
-    local target_dir="/usr/local/bin"
-    local use_sudo_install="n"
-    if [[ -w "${target_dir}" ]] || [[ "$(id -u)" -eq 0 ]]; then
-        use_sudo_install="n"
-    elif need_cmd sudo; then
-        use_sudo_install="y"
-    else
-        target_dir="${HOME}/.local/bin"
-        mkdir -p "${target_dir}"
-        log "无 /usr/local/bin 写权限, 安装到: ${target_dir}"
-    fi
-
+    need_cmd dialog || { install_napcat_simple_command; return 1; }
+    local target_dir="/usr/local/bin" use_sudo_install="n"
+    if [[ -w "${target_dir}" ]] || [[ "$(id -u)" -eq 0 ]]; then use_sudo_install="n"
+    elif need_cmd sudo; then use_sudo_install="y"
+    else target_dir="${HOME}/.local/bin"; mkdir -p "${target_dir}"; fi
     local base_url="https://raw.githubusercontent.com/NapNeko/NapCat-TUI-CLI/main/script/tui-cli"
     local files=("napcat" "_napcat_Boot" "_napcat_Config" "_napcat_old")
-    local failed="n"
-    local tmp_dir="${WORKDIR}/tui-cli"
+    local failed="n" tmp_dir="${WORKDIR}/tui-cli"
     mkdir -p "${tmp_dir}"
-
-    log "开始安装官方 NapCat TUI-CLI 组件到 ${target_dir}"
     local f url dest tmpf
     for f in "${files[@]}"; do
-        url="${base_url}/${f}"
-        tmpf="${tmp_dir}/${f}"
-        dest="${target_dir}/${f}"
-        log "下载组件: ${f}"
-        if ! download_file "${url}" "${tmpf}"; then
-            log "错误: 下载失败 ${f}"
-            failed="y"
-            break
-        fi
-        # 校验 shebang
-        if ! head -n1 "${tmpf}" | grep -q '^#!'; then
-            log "错误: ${f} 内容无效 (非脚本)"
-            head -n5 "${tmpf}" || true
-            failed="y"
-            break
-        fi
+        url="${base_url}/${f}"; tmpf="${tmp_dir}/${f}"; dest="${target_dir}/${f}"
+        download_file "${url}" "${tmpf}" || { failed="y"; break; }
+        head -n1 "${tmpf}" | grep -q "^#!"  || { failed="y"; break; }
         chmod 755 "${tmpf}"
         if [[ "${use_sudo_install}" == "y" ]]; then
-            if ! sudo mv "${tmpf}" "${dest}"; then
-                log "错误: 无法写入 ${dest}"
-                failed="y"
-                break
-            fi
-            sudo chmod 755 "${dest}" || true
+            sudo mv "${tmpf}" "${dest}" && sudo chmod 755 "${dest}" || { failed="y"; break; }
         else
-            if ! mv "${tmpf}" "${dest}"; then
-                log "错误: 无法写入 ${dest}"
-                failed="y"
-                break
-            fi
-            chmod 755 "${dest}" || true
+            mv "${tmpf}" "${dest}" && chmod 755 "${dest}" || { failed="y"; break; }
         fi
-        log "已安装: ${dest}"
     done
-
-    if [[ "${failed}" == "y" ]]; then
-        log "警告: 官方 TUI-CLI 安装失败, 回退简易启动命令"
-        install_napcat_simple_command
-        return 1
-    fi
-
+    [[ "${failed}" == "y" ]] && { install_napcat_simple_command; return 1; }
     NAPCAT_CMD_PATH="${target_dir}/napcat"
-    log "官方 TUI-CLI 安装成功: ${NAPCAT_CMD_PATH}"
-    if [[ "${target_dir}" == "${HOME}/.local/bin" ]]; then
-        if ! echo ":${PATH}:" | grep -q ":${target_dir}:"; then
-            log "警告: ${target_dir} 不在 PATH 中"
-            log "可执行: echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ~/.bashrc && source ~/.bashrc"
-        fi
-    fi
-    log "使用方式: 直接运行  napcat  进入终端管理界面"
-    log "带参数时走旧版 CLI, 例如: napcat help"
+    log "TUI-CLI installed: ${NAPCAT_CMD_PATH}"
 }
 
 install_napcat_simple_command() {
-    # 简易启动包装 (TUI 不可用时的回退)
-    local cmd_path=""
-    local user_bin="${HOME}/.local/bin"
+    local cmd_path="" user_bin="${HOME}/.local/bin"
     mkdir -p "${user_bin}"
-    if [[ -w /usr/local/bin ]] || [[ "$(id -u)" -eq 0 ]]; then
-        cmd_path="/usr/local/bin/napcat"
-    else
-        cmd_path="${user_bin}/napcat"
-    fi
-
+    if [[ -w /usr/local/bin ]] || [[ "$(id -u)" -eq 0 ]]; then cmd_path="/usr/local/bin/napcat"
+    else cmd_path="${user_bin}/napcat"; fi
     local wrapper_tmp="${WORKDIR}/napcat.simple"
-    cat > "${wrapper_tmp}" << EOF
+    cat > "${wrapper_tmp}" << 'WRAPPER_EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-QQ_BIN="${QQ_EXECUTABLE}"
-INSTALL_BASE="${INSTALL_BASE_DIR}"
-NAPCAT_HOME="${NAPCAT_DIR}"
+QQ_BIN="QQBIN_PLACEHOLDER"
+INSTALL_BASE="INSTALLBASE_PLACEHOLDER"
+NAPCAT_HOME="NAPCATHOME_PLACEHOLDER"
 SESSION_NAME="napcat"
-if [[ ! -f "\${QQ_BIN}" ]]; then
-    echo "错误: 未找到 QQ: \${QQ_BIN}"; exit 1
-fi
+if [[ ! -f "${QQ_BIN}" ]]; then echo "Error: QQ not found: ${QQ_BIN}"; exit 1; fi
 run_fg() {
-    if command -v xvfb-run >/dev/null 2>&1; then
-        exec xvfb-run -a "\${QQ_BIN}" --no-sandbox "\$@"
-    else
-        exec "\${QQ_BIN}" --no-sandbox "\$@"
-    fi
+    if command -v xvfb-run >/dev/null 2>&1; then exec xvfb-run -a "${QQ_BIN}" --no-sandbox "$@"
+    else exec "${QQ_BIN}" --no-sandbox "$@"; fi
 }
-session_exists() {
-    command -v screen >/dev/null 2>&1 || return 1
-    screen -list 2>/dev/null | grep -qE "[0-9]+\\.\${SESSION_NAME}[[:space:]]"
-}
-cmd="\${1:-start}"; shift || true
-case "\${cmd}" in
-    start|run|fg|"") run_fg "\$@" ;;
+session_exists() { command -v screen >/dev/null 2>&1 || return 1; screen -list 2>/dev/null | grep -qE "[0-9]+\.${SESSION_NAME}[[:space:]]"; }
+cmd="${1:-start}"; shift || true
+case "${cmd}" in
+    start|run|fg|"") run_fg "$@" ;;
     bg|background|daemon)
-        command -v screen >/dev/null 2>&1 || { echo "需要 screen"; exit 1; }
-        session_exists && { echo "已在运行"; exit 0; }
-        if command -v xvfb-run >/dev/null 2>&1; then
-            screen -dmS "\${SESSION_NAME}" xvfb-run -a "\${QQ_BIN}" --no-sandbox "\$@"
-        else
-            screen -dmS "\${SESSION_NAME}" "\${QQ_BIN}" --no-sandbox "\$@"
-        fi
-        echo "后台已启动: screen -r \${SESSION_NAME}"
+        command -v screen >/dev/null 2>&1 || { echo "Need screen"; exit 1; }
+        session_exists && { echo "Already running"; exit 0; }
+        if command -v xvfb-run >/dev/null 2>&1; then screen -dmS "${SESSION_NAME}" xvfb-run -a "${QQ_BIN}" --no-sandbox "$@"
+        else screen -dmS "${SESSION_NAME}" "${QQ_BIN}" --no-sandbox "$@"; fi
+        echo "Background started: screen -r ${SESSION_NAME}"
         ;;
-    stop) session_exists && screen -S "\${SESSION_NAME}" -X quit && echo stopped || echo "未运行" ;;
-    status)
-        echo "QQ=\${QQ_BIN}"; echo "NAPCAT=\${NAPCAT_HOME}"
-        session_exists && echo "后台: 运行中" || echo "后台: 未运行"
-        ;;
-    help|-h|--help)
-        echo "简易 napcat: start|bg|stop|status"
-        echo "提示: 官方 TUI 安装失败时使用此回退命令"
-        ;;
-    *)
-        if [[ "\${cmd}" =~ ^[0-9]+$ ]]; then run_fg -q "\${cmd}" "\$@"; else
-            echo "未知参数: \${cmd}"; exit 1
-        fi
-        ;;
+    stop) session_exists && screen -S "${SESSION_NAME}" -X quit && echo stopped || echo "Not running" ;;
+    status) echo "QQ=${QQ_BIN}"; echo "NAPCAT=${NAPCAT_HOME}"; session_exists && echo "BG: running" || echo "BG: stopped" ;;
+    help|-h|--help) echo "Usage: napcat start|bg|stop|status" ;;
+    *) if [[ "${cmd}" =~ ^[0-9]+$ ]]; then run_fg -q "${cmd}" "$@"; else echo "Unknown: ${cmd}"; exit 1; fi ;;
 esac
-EOF
+WRAPPER_EOF
+    sed -i "s|QQBIN_PLACEHOLDER|${QQ_EXECUTABLE}|g" "${wrapper_tmp}"
+    sed -i "s|INSTALLBASE_PLACEHOLDER|${INSTALL_BASE_DIR}|g" "${wrapper_tmp}"
+    sed -i "s|NAPCATHOME_PLACEHOLDER|${NAPCAT_DIR}|g" "${wrapper_tmp}"
     if [[ "${cmd_path}" == /usr/local/bin/napcat ]]; then
-        if [[ -w /usr/local/bin ]] || [[ "$(id -u)" -eq 0 ]]; then
-            install -m 755 "${wrapper_tmp}" "${cmd_path}"
-        elif need_cmd sudo && sudo install -m 755 "${wrapper_tmp}" "${cmd_path}"; then
-            :
-        else
-            cmd_path="${user_bin}/napcat"
-            install -m 755 "${wrapper_tmp}" "${cmd_path}"
-        fi
-    else
-        install -m 755 "${wrapper_tmp}" "${cmd_path}"
-    fi
+        if [[ -w /usr/local/bin ]] || [[ "$(id -u)" -eq 0 ]]; then install -m 755 "${wrapper_tmp}" "${cmd_path}"
+        elif need_cmd sudo && sudo install -m 755 "${wrapper_tmp}" "${cmd_path}"; then :
+        else cmd_path="${user_bin}/napcat"; install -m 755 "${wrapper_tmp}" "${cmd_path}"; fi
+    else install -m 755 "${wrapper_tmp}" "${cmd_path}"; fi
     NAPCAT_CMD_PATH="${cmd_path}"
-    log "已安装简易命令: ${cmd_path}"
+    log "Simple command: ${cmd_path}"
 }
 
 show_summary() {
     echo ""
-    log "======== 安装完成 ========"
-    log "安装目录: ${INSTALL_BASE_DIR}"
-    log "QQ 路径: ${QQ_EXECUTABLE}"
-    log "NapCat 路径: ${NAPCAT_DIR}"
-    log "下载缓存: ${DOWNLOAD_DIR}"
-    log "QQ 版本: ${SELECTED_QQ_VERSION}"
-    log "系统架构: ${SYSTEM_ARCH}"
-    log "包格式: ${PACKAGE_FORMAT}"
-    log "获取方式: $([ "${PACKAGE_MODE}" = "manual" ] && echo "手动导入" || echo "直连下载")"
+    log "======== Installation Complete ========"
+    log "Install dir: ${INSTALL_BASE_DIR}"
+    log "QQ path: ${QQ_EXECUTABLE}"
+    log "NapCat path: ${NAPCAT_DIR}"
+    log "QQ version: ${SELECTED_QQ_VERSION}"
+    log "Source: $([ "${DOWNLOAD_MODE}" = "manual" ] && echo "Manual" || ([ "${DOWNLOAD_MODE}" = "gitee" ] && echo "Gitee" || echo "Direct"))"
     echo ""
-    log "快捷命令 (官方 TUI-CLI):"
+    log "Start command:"
     if [[ -n "${NAPCAT_CMD_PATH:-}" ]]; then
-        echo -e "  ${CYAN}napcat${NC}              # 打开终端管理界面 (dialog TUI)"
-        echo -e "  命令路径: ${CYAN}${NAPCAT_CMD_PATH}${NC}"
-        echo -e "  文档: ${CYAN}https://napneko.github.io/guide/napcat${NC}"
-        echo -e "  项目: ${CYAN}https://github.com/NapNeko/NapCat-TUI-CLI${NC}"
+        echo -e "  ${CYAN}napcat${NC}    # Terminal UI"
+        echo -e "  Path: ${CYAN}${NAPCAT_CMD_PATH}${NC}"
+        echo -e "  Docs: ${CYAN}https://napneko.github.io/guide/napcat${NC}"
     else
         echo -e "  ${CYAN}xvfb-run -a ${QQ_EXECUTABLE} --no-sandbox${NC}"
     fi
     echo ""
-    log "等价原生命令:"
-    echo -e "  ${CYAN}xvfb-run -a ${QQ_EXECUTABLE} --no-sandbox${NC}"
-    echo ""
-    log "WebUI Token 文件:"
-    echo -e "  ${CYAN}${NAPCAT_DIR}/config/webui.json${NC}"
+    log "Raw: xvfb-run -a ${QQ_EXECUTABLE} --no-sandbox"
+    log "WebUI Token: ${NAPCAT_DIR}/config/webui.json"
     log "=========================="
 }
 
 main() {
     clear || true
     logo
-
     detect_arch
     detect_distro
-    choose_package_format
-    choose_package_mode
-
+    choose_download_mode
+    echo ""
+    log "Checking local packages..."
+    local qq_found="n" napcat_found="n"
+    local dir=$(manual_pkg_dir)
+    check_local_qq_package && { qq_found="y"; log "Found QQ: ${MANUAL_QQ_PKG}"; }
+    check_local_napcat_package && { napcat_found="y"; log "Found NapCat: ${MANUAL_NAPCAT_ZIP}"; }
+    if [[ "${qq_found}" == "y" && "${napcat_found}" == "y" ]]; then
+        log "Local packages ready, skip download"
+        [[ "${DOWNLOAD_MODE}" != "manual" ]] && DOWNLOAD_MODE="manual"
+    elif [[ "${DOWNLOAD_MODE}" == "manual" ]]; then
+        wait_manual_packages
+    fi
     DOWNLOAD_DIR="${WORKDIR}/downloads"
     mkdir -p "${DOWNLOAD_DIR}"
-    log "临时工作目录: ${WORKDIR}"
-    log "文件下载目录: ${DOWNLOAD_DIR}"
-    log "最终安装目录: ${INSTALL_BASE_DIR}"
-
+    log "Work dir: ${WORKDIR}"
     ensure_deps
-    choose_qq_version
-    if [[ "${PACKAGE_MODE}" == "manual" ]]; then
-        wait_manual_packages
+    if [[ "${DOWNLOAD_MODE}" == "manual" ]]; then
+        log "Manual: skip version selection"
+        SELECTED_QQ_VERSION="manual"
+        SELECTED_QQ_FILENAME="$(basename "${MANUAL_QQ_PKG}")"
+    else
+        choose_qq_version
     fi
     check_existing_install
     install_linuxqq
