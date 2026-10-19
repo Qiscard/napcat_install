@@ -4,7 +4,7 @@
     "https://github.com/Rodert/qq-versions/releases",
     "https://im.qq.com/"
   ],
-  "synced_at": "2026-10-05T10:32:25Z",
+  "synced_at": "2026-10-19T08:58:20Z",
   "count": 23,
   "dead_count": 6,
   "packages": [
@@ -379,13 +379,13 @@
   ],
   "dead_packages": [
     {
-      "version": "3.2.34",
-      "arch": "amd64",
+      "version": "3.2.32",
+      "arch": "mips64el",
       "format": "deb",
-      "url": "https://qqdl.gtimg.cn/qqfile/QQNTV2/9.9.36/release/9ee04bef/QQ_3.2.34_260924_amd64_01.deb",
+      "url": "https://qqdl.gtimg.cn/qqfile/QQNTV2/9.9.33/release/3f89efc5/QQ_3.2.32_260812_mips64el_01.deb",
       "source": "official",
-      "check_code": "000",
-      "filename": "QQ_3.2.34_260924_amd64_01.deb"
+      "check_code": "403",
+      "filename": "QQ_3.2.32_260812_mips64el_01.deb"
     },
     {
       "version": "3.2.34",
@@ -393,17 +393,8 @@
       "format": "rpm",
       "url": "https://qqdl.gtimg.cn/qqfile/QQNTV2/9.9.36/release/9ee04bef/QQ_3.2.34_260924_x86_64_01.rpm",
       "source": "official",
-      "check_code": "000",
+      "check_code": "403",
       "filename": "QQ_3.2.34_260924_x86_64_01.rpm"
-    },
-    {
-      "version": "3.2.34",
-      "arch": "arm64",
-      "format": "deb",
-      "url": "https://qqdl.gtimg.cn/qqfile/QQNTV2/9.9.36/release/9ee04bef/QQ_3.2.34_260924_arm64_01.deb",
-      "source": "official",
-      "check_code": "000",
-      "filename": "QQ_3.2.34_260924_arm64_01.deb"
     },
     {
       "version": "3.2.34",
@@ -411,8 +402,17 @@
       "format": "rpm",
       "url": "https://qqdl.gtimg.cn/qqfile/QQNTV2/9.9.36/release/9ee04bef/QQ_3.2.34_260924_aarch64_01.rpm",
       "source": "official",
-      "check_code": "000",
+      "check_code": "403",
       "filename": "QQ_3.2.34_260924_aarch64_01.rpm"
+    },
+    {
+      "version": "3.2.34",
+      "arch": "arm64",
+      "format": "deb",
+      "url": "https://qqdl.gtimg.cn/qqfile/QQNTV2/9.9.36/release/9ee04bef/QQ_3.2.34_260924_arm64_01.deb",
+      "source": "official",
+      "check_code": "403",
+      "filename": "QQ_3.2.34_260924_arm64_01.deb"
     },
     {
       "version": "3.2.34",
@@ -420,17 +420,17 @@
       "format": "deb",
       "url": "https://qqdl.gtimg.cn/qqfile/QQNTV2/9.9.36/release/9ee04bef/QQ_3.2.34_260924_loongarch64_01.deb",
       "source": "official",
-      "check_code": "000",
+      "check_code": "403",
       "filename": "QQ_3.2.34_260924_loongarch64_01.deb"
     },
     {
-      "version": "3.2.32",
-      "arch": "mips64el",
+      "version": "3.2.34",
+      "arch": "amd64",
       "format": "deb",
-      "url": "https://qqdl.gtimg.cn/qqfile/QQNTV2/9.9.33/release/3f89efc5/QQ_3.2.32_260812_mips64el_01.deb",
+      "url": "https://qqdl.gtimg.cn/qqfile/QQNTV2/9.9.36/release/9ee04bef/QQ_3.2.34_260924_amd64_01.deb",
       "source": "official",
-      "check_code": "000",
-      "filename": "QQ_3.2.32_260812_mips64el_01.deb"
+      "check_code": "403",
+      "filename": "QQ_3.2.34_260924_amd64_01.deb"
     }
   ]
 }
